@@ -31,9 +31,11 @@ import dev.jdtech.jellyfin.settings.domain.Constants
 import java.util.UUID
 import javax.inject.Inject
 import kotlin.math.ceil
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,6 +77,7 @@ constructor(
 
     data class UiState(
         val currentItemTitle: String,
+        val currentItemId: UUID? = null,
         val currentSegment: FindroidSegment?,
         val currentSkipButtonStringRes: Int,
         val currentTrickplay: Trickplay?,
@@ -89,6 +92,10 @@ constructor(
     private var currentMediaItemIndex = savedStateHandle["mediaItemIndex"] ?: 0
     private var playbackPosition: Long = savedStateHandle["position"] ?: 0
     private var currentMediaItemSegments: List<FindroidSegment> = emptyList()
+    private var transitionJob: Job? = null
+    private var episodeSelectionJob: Job? = null
+    private var episodeSelectionGeneration = 0
+    private var transitionGeneration = 0
 
     // Segments preferences
     var segmentsSkipButton: Boolean = false
@@ -344,10 +351,13 @@ constructor(
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         Timber.d("Playing MediaItem: ${mediaItem?.mediaId}")
         savedStateHandle["mediaItemIndex"] = player.currentMediaItemIndex
-        viewModelScope.launch {
+        transitionJob?.cancel()
+        val generation = ++transitionGeneration
+        val transitionedId = mediaItem?.mediaId ?: return
+        transitionJob = viewModelScope.launch {
             try {
                 items
-                    .first { it.itemId.toString() == player.currentMediaItem?.mediaId }
+                    .first { it.itemId.toString() == transitionedId }
                     .let { item ->
                         val itemTitle =
                             if (item.parentIndexNumber != null && item.indexNumber != null) {
@@ -362,25 +372,35 @@ constructor(
                         _uiState.update {
                             it.copy(
                                 currentItemTitle = itemTitle,
+                                currentItemId = item.itemId,
                                 currentSegment = null,
+                                currentTrickplay = null,
                                 currentChapters = item.chapters,
                                 fileLoaded = false,
                             )
                         }
+                        currentMediaItemSegments = emptyList()
 
                         repository.postPlaybackStart(item.itemId)
+                        if (!isCurrentTransition(transitionedId, generation)) return@let
 
                         if (segmentsSkipButton || segmentsAutoSkip) {
-                            getSegments(item.itemId)
+                            val segments = getSegments(item.itemId)
+                            if (!isCurrentTransition(transitionedId, generation)) return@let
+                            currentMediaItemSegments = segments
                         }
 
                         if (appPreferences.getValue(appPreferences.playerTrickplay)) {
-                            getTrickplay(item)
+                            val trickplay = getTrickplay(item)
+                            if (!isCurrentTransition(transitionedId, generation)) return@let
+                            _uiState.update { it.copy(currentTrickplay = trickplay) }
                         }
+                        if (!isCurrentTransition(transitionedId, generation)) return@let
 
                         playlistManager.setCurrentMediaItemIndex(item.itemId)
 
                         val previousItem = playlistManager.getPreviousPlayerItem()
+                        if (!isCurrentTransition(transitionedId, generation)) return@let
                         if (previousItem != null) {
                             items.add(player.currentMediaItemIndex, previousItem)
                             player.addMediaItem(
@@ -390,6 +410,7 @@ constructor(
                         }
 
                         val nextItem = playlistManager.getNextPlayerItem()
+                        if (!isCurrentTransition(transitionedId, generation)) return@let
                         if (nextItem != null) {
                             items.add(player.currentMediaItemIndex + 1, nextItem)
                             player.addMediaItem(
@@ -400,6 +421,8 @@ constructor(
 
                         Timber.tag("PlayerItems").d(items.map { it.indexNumber }.toString())
                     }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.e(e)
             }
@@ -490,55 +513,139 @@ constructor(
         playbackSpeed = speed
     }
 
-    private suspend fun getSegments(itemId: UUID) {
-        try {
-            currentMediaItemSegments = repository.getSegments(itemId)
-        } catch (e: Exception) {
+    fun playEpisode(itemId: UUID, onComplete: (Boolean) -> Unit = {}) {
+        if (player.currentMediaItem?.mediaId == itemId.toString()) {
+            // A pending different selection must not win after the user chooses the current item.
+            episodeSelectionGeneration++
+            episodeSelectionJob?.cancel()
+            onComplete(true)
+            return
+        }
+        val generation = ++episodeSelectionGeneration
+        episodeSelectionJob?.cancel()
+        episodeSelectionJob = viewModelScope.launch {
+            val prepared =
+                try {
+                    playlistManager.prepareEpisode(itemId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.e(e)
+                    null
+                }
+                    ?: run {
+                        onComplete(false)
+                        return@launch
+                    }
+            if (generation != episodeSelectionGeneration) return@launch
+            val mediaItem =
+                try {
+                    prepared.playerItem.toMediaItem()
+                } catch (e: Exception) {
+                    Timber.e(e)
+                    onComplete(false)
+                    return@launch
+                }
+            // Let the current item finish its transition setup against the old playlist.
+            transitionJob?.join()
+            if (generation != episodeSelectionGeneration) return@launch
+            transitionGeneration++
+            val previousId = player.currentMediaItem?.mediaId
+            if (previousId != null) {
+                try {
+                    repository.postPlaybackStop(
+                        UUID.fromString(previousId),
+                        player.currentPosition * 10000,
+                        if (player.duration > 0)
+                            (player.currentPosition * 100 / player.duration).toInt()
+                        else 0,
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.e(e)
+                }
+            }
+            if (generation != episodeSelectionGeneration) return@launch
+            val resumePlayback = player.playWhenReady
+            val next = prepared.playerItem
+            playlistManager.commitEpisode(prepared)
+            _uiState.update {
+                it.copy(
+                    currentSegment = null,
+                    currentTrickplay = null,
+                    currentChapters = emptyList(),
+                    fileLoaded = false,
+                )
+            }
             currentMediaItemSegments = emptyList()
-            Timber.e(e)
+            items = mutableListOf(next)
+            currentMediaItemIndex = 0
+            savedStateHandle["mediaItemIndex"] = 0
+            savedStateHandle["position"] = 0L
+            playbackPosition = 0L
+            player.setMediaItem(mediaItem, next.playbackPosition)
+            player.prepare()
+            player.playWhenReady = resumePlayback
+            onComplete(true)
         }
     }
 
-    private suspend fun getTrickplay(item: PlayerItem) {
-        val trickplayInfo = item.trickplayInfo ?: return
+    private fun isCurrentTransition(mediaId: String, generation: Int): Boolean =
+        transitionGeneration == generation && player.currentMediaItem?.mediaId == mediaId
+
+    private suspend fun getSegments(itemId: UUID): List<FindroidSegment> {
+        return try {
+            repository.getSegments(itemId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.e(e)
+            emptyList()
+        }
+    }
+
+    private suspend fun getTrickplay(item: PlayerItem): Trickplay? {
+        val trickplayInfo = item.trickplayInfo ?: return null
         Timber.d("Trickplay Resolution: ${trickplayInfo.width}")
 
-        withContext(Dispatchers.Default) {
-            val maxIndex =
-                ceil(
-                        trickplayInfo.thumbnailCount
-                            .toDouble()
-                            .div(trickplayInfo.tileWidth * trickplayInfo.tileHeight)
-                    )
-                    .toInt()
-            val bitmaps = mutableListOf<Bitmap>()
+        val bitmaps =
+            withContext(Dispatchers.Default) {
+                val maxIndex =
+                    ceil(
+                            trickplayInfo.thumbnailCount
+                                .toDouble()
+                                .div(trickplayInfo.tileWidth * trickplayInfo.tileHeight)
+                        )
+                        .toInt()
+                val bitmaps = mutableListOf<Bitmap>()
 
-            for (i in 0..maxIndex) {
-                repository.getTrickplayData(item.itemId, trickplayInfo.width, i)?.let { byteArray ->
-                    val fullBitmap = BitmapFactory.decodeByteArray(byteArray, 0, byteArray.size)
-                    for (offsetY in
-                        0..<trickplayInfo.height * trickplayInfo.tileHeight step
-                            trickplayInfo.height) {
-                        for (offsetX in
-                            0..<trickplayInfo.width * trickplayInfo.tileWidth step
-                                trickplayInfo.width) {
-                            val bitmap =
-                                Bitmap.createBitmap(
-                                    fullBitmap,
-                                    offsetX,
-                                    offsetY,
-                                    trickplayInfo.width,
-                                    trickplayInfo.height,
-                                )
-                            bitmaps.add(bitmap)
+                for (i in 0..maxIndex) {
+                    repository.getTrickplayData(item.itemId, trickplayInfo.width, i)?.let {
+                        byteArray ->
+                        val fullBitmap = BitmapFactory.decodeByteArray(byteArray, 0, byteArray.size)
+                        for (offsetY in
+                            0..<trickplayInfo.height * trickplayInfo.tileHeight step
+                                trickplayInfo.height) {
+                            for (offsetX in
+                                0..<trickplayInfo.width * trickplayInfo.tileWidth step
+                                    trickplayInfo.width) {
+                                val bitmap =
+                                    Bitmap.createBitmap(
+                                        fullBitmap,
+                                        offsetX,
+                                        offsetY,
+                                        trickplayInfo.width,
+                                        trickplayInfo.height,
+                                    )
+                                bitmaps.add(bitmap)
+                            }
                         }
                     }
                 }
+                bitmaps
             }
-            _uiState.update {
-                it.copy(currentTrickplay = Trickplay(trickplayInfo.interval, bitmaps))
-            }
-        }
+        return Trickplay(trickplayInfo.interval, bitmaps)
     }
 
     fun skipSegment(segment: FindroidSegment) {

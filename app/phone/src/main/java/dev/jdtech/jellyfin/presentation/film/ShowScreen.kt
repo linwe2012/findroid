@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,10 +23,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,12 +44,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.graphics.toColorInt
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.PlayerActivity
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyShow
+import dev.jdtech.jellyfin.film.presentation.episodebrowser.EpisodeBrowserViewModel
 import dev.jdtech.jellyfin.film.presentation.show.ShowAction
 import dev.jdtech.jellyfin.film.presentation.show.ShowState
 import dev.jdtech.jellyfin.film.presentation.show.ShowViewModel
@@ -56,6 +66,7 @@ import dev.jdtech.jellyfin.presentation.film.components.ItemHeader
 import dev.jdtech.jellyfin.presentation.film.components.ItemPoster
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
 import dev.jdtech.jellyfin.presentation.film.components.OverviewText
+import dev.jdtech.jellyfin.presentation.film.episodebrowser.EpisodeBrowser
 import dev.jdtech.jellyfin.presentation.theme.FindroidTheme
 import dev.jdtech.jellyfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
@@ -71,16 +82,19 @@ fun ShowScreen(
     navigateToItem: (item: FindroidItem) -> Unit,
     navigateToPerson: (personId: UUID) -> Unit,
     viewModel: ShowViewModel = hiltViewModel(),
+    episodeBrowserViewModel: EpisodeBrowserViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
 
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    LaunchedEffect(true) { viewModel.loadShow(showId = showId) }
+    LaunchedEffect(showId) { viewModel.loadShow(showId = showId) }
 
     ShowScreenLayout(
         state = state,
+        episodeBrowserViewModel = episodeBrowserViewModel,
+        onBrowseEpisodes = { episodeBrowserViewModel.loadShow(showId) },
         onAction = { action ->
             when (action) {
                 is ShowAction.Play -> {
@@ -108,7 +122,12 @@ fun ShowScreen(
 }
 
 @Composable
-private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
+private fun ShowScreenLayout(
+    state: ShowState,
+    episodeBrowserViewModel: EpisodeBrowserViewModel? = null,
+    onBrowseEpisodes: () -> Unit = {},
+    onAction: (ShowAction) -> Unit,
+) {
     val safePadding = rememberSafePadding()
 
     val paddingStart = safePadding.start + MaterialTheme.spacings.default
@@ -116,6 +135,7 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
     val paddingBottom = safePadding.bottom + MaterialTheme.spacings.default
 
     val scrollState = rememberScrollState()
+    var episodesDialogOpen by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         state.show?.let { show ->
@@ -211,6 +231,17 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                         canPlay = state.seasons.isNotEmpty(),
                     )
                     Spacer(Modifier.height(MaterialTheme.spacings.small))
+                    OutlinedButton(
+                        onClick = {
+                            onBrowseEpisodes()
+                            episodesDialogOpen = true
+                        },
+                        enabled = episodeBrowserViewModel != null && state.seasons.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(CoreR.string.browse_episodes))
+                    }
+                    Spacer(Modifier.height(MaterialTheme.spacings.small))
                     OverviewText(text = show.overview, maxCollapsedLines = 3)
                     Spacer(Modifier.height(MaterialTheme.spacings.medium))
                     InfoText(
@@ -295,6 +326,41 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
             onBackClick = { onAction(ShowAction.OnBackClick) },
             onHomeClick = { onAction(ShowAction.OnHomeClick) },
         )
+
+        if (episodesDialogOpen) {
+            Dialog(
+                onDismissRequest = { episodesDialogOpen = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Surface(
+                    modifier =
+                        Modifier.fillMaxWidth(0.96f).fillMaxHeight(0.88f).widthIn(max = 560.dp),
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surface,
+                ) {
+                    Column(Modifier.fillMaxSize().padding(MaterialTheme.spacings.default)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = { episodesDialogOpen = false }) {
+                                Text(stringResource(CoreR.string.close))
+                            }
+                        }
+                        episodeBrowserViewModel?.let { browser ->
+                            EpisodeBrowser(
+                                viewModel = browser,
+                                onSelect = {
+                                    episodesDialogOpen = false
+                                    onAction(ShowAction.NavigateToItem(it))
+                                },
+                                modifier = Modifier.fillMaxWidth().weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -260,14 +260,17 @@ class JellyfinRepositoryImpl(
             }
         }
 
-    override suspend fun getNextUp(seriesId: UUID?): List<FindroidEpisode> =
+    override suspend fun getNextUp(
+        seriesId: UUID?,
+        enableResumable: Boolean,
+    ): List<FindroidEpisode> =
         withContext(Dispatchers.IO) {
             jellyfinApi.showsApi
                 .getNextUp(
                     jellyfinApi.userId!!,
                     limit = 24,
                     seriesId = seriesId,
-                    enableResumable = false,
+                    enableResumable = enableResumable,
                 )
                 .content
                 .items

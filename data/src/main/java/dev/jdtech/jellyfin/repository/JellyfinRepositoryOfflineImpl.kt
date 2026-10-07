@@ -163,7 +163,10 @@ class JellyfinRepositoryOfflineImpl(
             }
         }
 
-    override suspend fun getNextUp(seriesId: UUID?): List<FindroidEpisode> {
+    override suspend fun getNextUp(
+        seriesId: UUID?,
+        enableResumable: Boolean,
+    ): List<FindroidEpisode> {
         return withContext(Dispatchers.IO) {
             val result = mutableListOf<FindroidEpisode>()
             val shows =
@@ -182,7 +185,15 @@ class JellyfinRepositoryOfflineImpl(
                     episodes.getOrNull(indexOfLastPlayed + 1)?.let { result.add(it) }
                 }
             }
-            result.filter { it.playbackPositionTicks == 0L }
+            if (enableResumable) {
+                val resumeEpisodes = shows.flatMap { show ->
+                    database
+                        .getEpisodesByShowId(show.id)
+                        .map { it.toFindroidEpisode(database, jellyfinApi.userId!!) }
+                        .filter { it.playbackPositionTicks > 0 && !it.played }
+                }
+                resumeEpisodes + result.filter { it.playbackPositionTicks == 0L }
+            } else result.filter { it.playbackPositionTicks == 0L }
         }
     }
 

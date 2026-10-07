@@ -56,6 +56,16 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent">
 
+            <TextView
+                android:id="@+id/btn_episodes"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:text="@string/episodes"
+                android:textColor="@android:color/white"
+                android:textStyle="bold" />
+
             <ImageButton
                 android:id="@+id/btn_lockview"
                 android:layout_width="wrap_content"

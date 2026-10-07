@@ -24,9 +24,15 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.Space
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.viewModels
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.ComposeView
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.C
@@ -37,8 +43,10 @@ import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.databinding.ActivityPlayerBinding
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import dev.jdtech.jellyfin.presentation.player.PlayerEpisodePanel
 import dev.jdtech.jellyfin.presentation.player.SpeedSelectionDialogFragment
 import dev.jdtech.jellyfin.presentation.player.TrackSelectionDialogFragment
+import dev.jdtech.jellyfin.presentation.theme.FindroidTheme
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.utils.PlayerGestureHelper
 import dev.jdtech.jellyfin.utils.PreviewScrubListener
@@ -60,6 +68,7 @@ class PlayerActivity : BasePlayerActivity() {
     override val viewModel: PlayerViewModel by viewModels()
     private var previewScrubListener: PreviewScrubListener? = null
     private var wasZoom: Boolean = false
+    private var episodesPanelVisible by mutableStateOf(false)
     private var skipButtonTimeoutExpired: Boolean = true
 
     private lateinit var skipSegmentButton: Button
@@ -96,6 +105,46 @@ class PlayerActivity : BasePlayerActivity() {
 
         binding = ActivityPlayerBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        if (itemKind == org.jellyfin.sdk.model.api.BaseItemKind.MOVIE.serialName) {
+            binding.playerView.findViewById<TextView>(R.id.btn_episodes).isVisible = false
+        }
+        val episodesComposeView = ComposeView(this)
+        binding.root.addView(episodesComposeView, FrameLayout.LayoutParams(-1, -1))
+        episodesComposeView.setContent {
+            val state by viewModel.uiState.collectAsStateWithLifecycle()
+            FindroidTheme {
+                if (
+                    episodesPanelVisible &&
+                        !viewModel.isInPictureInPictureMode &&
+                        !isControlsLocked &&
+                        state.currentItemId != null
+                ) {
+                    PlayerEpisodePanel(
+                        currentEpisodeId = state.currentItemId,
+                        onDismiss = { episodesPanelVisible = false },
+                        onSelect = { episode ->
+                            viewModel.playEpisode(episode.id) { succeeded ->
+                                if (succeeded) episodesPanelVisible = false
+                                else
+                                    Toast.makeText(
+                                            this@PlayerActivity,
+                                            getString(
+                                                dev.jdtech.jellyfin.core.R.string
+                                                    .episode_switch_failed
+                                            ),
+                                            Toast.LENGTH_LONG,
+                                        )
+                                        .show()
+                            }
+                        },
+                    )
+                }
+            }
+        }
+        binding.playerView.findViewById<TextView>(R.id.btn_episodes).setOnClickListener {
+            if (!isControlsLocked && !viewModel.isInPictureInPictureMode)
+                episodesPanelVisible = true
+        }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         binding.playerView.player = viewModel.player
@@ -288,6 +337,7 @@ class PlayerActivity : BasePlayerActivity() {
         val lockedLayout = findViewById<FrameLayout>(R.id.locked_player_view)
 
         lockButton.setOnClickListener {
+            episodesPanelVisible = false
             exoPlayerControlView.visibility = View.GONE
             lockedLayout.visibility = View.VISIBLE
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
@@ -437,6 +487,7 @@ class PlayerActivity : BasePlayerActivity() {
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         viewModel.isInPictureInPictureMode = isInPictureInPictureMode
+        if (isInPictureInPictureMode) episodesPanelVisible = false
         when (isInPictureInPictureMode) {
             true -> {
                 binding.playerView.useController = false

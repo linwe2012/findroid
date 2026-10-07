@@ -21,6 +21,13 @@ import org.jellyfin.sdk.model.api.MediaStreamType
 import timber.log.Timber
 
 class PlaylistManager @Inject internal constructor(private val repository: JellyfinRepository) {
+    data class PreparedEpisode(
+        val episode: FindroidEpisode,
+        val episodes: List<FindroidItem>,
+        val playerItem: PlayerItem,
+        val index: Int,
+    )
+
     private var startItem: FindroidItem? = null
     private var items: List<FindroidItem> = emptyList()
     private val playerItems: MutableList<PlayerItem> = mutableListOf()
@@ -126,6 +133,32 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
         playerItems.add(playerItem)
 
         return playerItem
+    }
+
+    suspend fun prepareEpisode(itemId: UUID): PreparedEpisode? {
+        val episode = repository.getEpisode(itemId)
+        if (episode.missing || !episode.canPlay) return null
+        val episodeList =
+            repository
+                .getEpisodes(
+                    seriesId = episode.seriesId,
+                    seasonId = episode.seasonId,
+                    fields = listOf(ItemFields.CHAPTERS, ItemFields.TRICKPLAY),
+                )
+                .filter { !it.missing && it.canPlay }
+        val selectedEpisode = episodeList.firstOrNull { it.id == itemId } ?: episode
+        val selectedItem =
+            selectedEpisode.toPlayerItem(null, selectedEpisode.playbackPositionTicks / 10000)
+        val selectedIndex = episodeList.indexOfFirst { it.id == itemId }.coerceAtLeast(0)
+        return PreparedEpisode(selectedEpisode, episodeList, selectedItem, selectedIndex)
+    }
+
+    fun commitEpisode(prepared: PreparedEpisode) {
+        startItem = prepared.episode
+        items = prepared.episodes
+        currentItemIndex = prepared.index
+        playerItems.clear()
+        playerItems.add(prepared.playerItem)
     }
 
     suspend fun getPreviousPlayerItem(): PlayerItem? {
