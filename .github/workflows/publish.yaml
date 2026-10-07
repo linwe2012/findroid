@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - v*
+      - '!v1.1.0-episode-navigation.*'
 
 jobs:
   publish:

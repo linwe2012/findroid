@@ -1,0 +1,89 @@
+name: Custom prerelease APK
+
+on:
+  push:
+    tags:
+      - 'v1.1.0-episode-navigation.*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to create from this commit
+        required: true
+        default: v1.1.0-episode-navigation.1
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and release phone arm64 APK
+    runs-on: ubuntu-24.04
+    env:
+      TAG_NAME: ${{ inputs.release_tag || github.ref_name }}
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: 21
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Run episode navigation unit tests
+        run: ./gradlew :modes:film:testDebugUnitTest
+
+      - name: Check Kotlin formatting
+        run: ./gradlew ktfmtCheck
+
+      - name: Validate prerelease tag
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            case "$GITHUB_REF" in
+              refs/heads/main|refs/heads/feature/episode-navigation) ;;
+              *) echo "Dispatch from main or feature/episode-navigation only" >&2; exit 1 ;;
+            esac
+          fi
+          case "$TAG_NAME" in
+            v1.1.0-episode-navigation.*) ;;
+            *) echo "Unsupported prerelease tag: $TAG_NAME" >&2; exit 1 ;;
+          esac
+
+      - name: Configure stable prerelease debug signing
+        run: |
+          mkdir -p "$HOME/.android"
+          cp .github/debug-signing/findroid-prerelease-debug.keystore "$HOME/.android/debug.keystore"
+
+      - name: Build phone arm64 debug APK
+        run: ./gradlew :app:phone:assembleLibreDebug "-PprereleaseVersionName=${TAG_NAME#v}+debug"
+
+      - name: Prepare release asset
+        id: asset
+        run: |
+          apk="app/phone/build/outputs/apk/libre/debug/phone-libre-arm64-v8a-debug.apk"
+          test -f "$apk"
+          asset="Findroid-${TAG_NAME#v}-debug-libre-arm64-v8a.apk"
+          cp "$apk" "$asset"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "asset_path=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Create custom debug prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          Custom Findroid prerelease containing the episode navigation changes.
+
+          This is an installable phone arm64 APK signed with this fork's stable, publicly stored debug key. It is a custom debug build, not an official Findroid release. Its application ID has the .debug suffix, so it installs alongside the official app. Repeated builds from this workflow can update the same installation.
+          EOF
+          gh release create "${{ steps.asset.outputs.tag_name }}" \
+            "${{ steps.asset.outputs.asset_path }}" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Findroid ${{ steps.asset.outputs.tag_name }} (custom debug build)" \
+            --notes-file release-notes.md

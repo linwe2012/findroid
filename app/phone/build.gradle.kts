@@ -20,7 +20,8 @@ android {
         targetSdk = Versions.TARGET_SDK
 
         versionCode = Versions.APP_CODE
-        versionName = Versions.APP_NAME
+        versionName =
+            providers.gradleProperty("prereleaseVersionName").orElse(Versions.APP_NAME).get()
 
         testInstrumentationRunner = "dev.jdtech.jellyfin.HiltTestRunner"
     }
