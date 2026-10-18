@@ -117,6 +117,8 @@
     <string name="jump_to_recently_watched">Jump to recently watched episode</string>
     <string name="no_episodes">No episodes found</string>
     <string name="now_playing">Now playing</string>
+    <string name="show_episode_details">Show episode images and descriptions</string>
+    <string name="hide_episode_details">Hide episode images and descriptions</string>
     <string name="episode_switch_failed">Could not start this episode</string>
     <string name="season">Season</string>
     <string name="browse_episodes">Browse episodes</string>

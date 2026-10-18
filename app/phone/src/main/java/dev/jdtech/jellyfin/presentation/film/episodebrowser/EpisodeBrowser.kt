@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -46,6 +47,9 @@ import dev.jdtech.jellyfin.film.presentation.episodebrowser.EpisodeBrowserViewMo
 import dev.jdtech.jellyfin.film.presentation.episodebrowser.EpisodeNumberRange
 import dev.jdtech.jellyfin.film.presentation.episodebrowser.findEpisodeIndex
 import dev.jdtech.jellyfin.models.FindroidEpisode
+import dev.jdtech.jellyfin.presentation.film.components.Direction
+import dev.jdtech.jellyfin.presentation.film.components.ItemPoster
+import dev.jdtech.jellyfin.presentation.film.components.OverviewText
 import kotlinx.coroutines.launch
 
 @Composable
@@ -59,6 +63,7 @@ fun EpisodeBrowser(
     var seasonMenuExpanded by remember { mutableStateOf(false) }
     var numberInput by remember { mutableStateOf("") }
     var numberError by remember { mutableStateOf(false) }
+    var showEpisodeDetails by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -93,6 +98,17 @@ fun EpisodeBrowser(
                 style = MaterialTheme.typography.titleSmall,
             )
             Spacer(Modifier.weight(1f))
+            val detailsToggleDescription =
+                stringResource(
+                    if (showEpisodeDetails) CoreR.string.hide_episode_details
+                    else CoreR.string.show_episode_details
+                )
+            IconButton(
+                onClick = { showEpisodeDetails = !showEpisodeDetails },
+                modifier = Modifier.semantics { contentDescription = detailsToggleDescription },
+            ) {
+                Text(if (showEpisodeDetails) "▣" else "▤")
+            }
             onClose?.let {
                 IconButton(
                     onClick = it,
@@ -218,21 +234,39 @@ fun EpisodeBrowser(
                         append("● ${stringResource(label)} · ")
                     }
                 }
-                Text(
-                    text = "$markers$number. ${episode.name}",
-                    color =
-                        when {
-                            current -> MaterialTheme.colorScheme.primary
-                            !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                            else -> MaterialTheme.colorScheme.onSurface
-                        },
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier =
                         Modifier.fillMaxWidth()
                             .clickable(enabled = enabled) { onSelect(episode) }
                             .padding(vertical = 12.dp, horizontal = 8.dp),
-                )
+                ) {
+                    if (showEpisodeDetails) {
+                        ItemPoster(
+                            item = episode,
+                            direction = Direction.HORIZONTAL,
+                            modifier = Modifier.width(112.dp),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                    }
+                    Column {
+                        Text(
+                            text = "$markers$number. ${episode.name}",
+                            color =
+                                when {
+                                    current -> MaterialTheme.colorScheme.primary
+                                    !enabled ->
+                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                    else -> MaterialTheme.colorScheme.onSurface
+                                },
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (showEpisodeDetails && episode.overview.isNotBlank()) {
+                            OverviewText(text = episode.overview, maxCollapsedLines = 3)
+                        }
+                    }
+                }
             }
         }
     }
