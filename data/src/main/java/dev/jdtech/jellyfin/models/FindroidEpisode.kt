@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.models
 
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import java.time.LocalDateTime
 import java.util.UUID
 import org.jellyfin.sdk.model.DateTime
 import org.jellyfin.sdk.model.api.BaseItemDto
@@ -35,6 +36,7 @@ data class FindroidEpisode(
     override val images: FindroidImages,
     override val chapters: List<FindroidChapter>,
     override val trickplayInfo: Map<String, FindroidTrickplayInfo>?,
+    val lastPlayedDate: LocalDateTime? = null,
 ) : FindroidItem, FindroidSources
 
 suspend fun BaseItemDto.toFindroidEpisode(
@@ -62,6 +64,7 @@ suspend fun BaseItemDto.toFindroidEpisode(
             canDownload = canDownload == true,
             runtimeTicks = runTimeTicks ?: 0,
             playbackPositionTicks = userData?.playbackPositionTicks ?: 0L,
+            lastPlayedDate = userData?.lastPlayedDate,
             premiereDate = premiereDate,
             seriesId = seriesId!!,
             seriesName = seriesName.orEmpty(),

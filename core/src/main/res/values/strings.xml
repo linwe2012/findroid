@@ -114,6 +114,7 @@
     <string name="episode_number_input">Episode number</string>
     <string name="jump">Jump</string>
     <string name="episode_number_not_found">No episode with that number in this season</string>
+    <string name="jump_to_recently_watched">Jump to recently watched episode</string>
     <string name="no_episodes">No episodes found</string>
     <string name="now_playing">Now playing</string>
     <string name="episode_switch_failed">Could not start this episode</string>

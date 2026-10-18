@@ -4,9 +4,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -15,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -31,6 +34,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,6 +53,7 @@ fun EpisodeBrowser(
     viewModel: EpisodeBrowserViewModel,
     onSelect: (FindroidEpisode) -> Unit,
     modifier: Modifier = Modifier,
+    onClose: (() -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var seasonMenuExpanded by remember { mutableStateOf(false) }
@@ -57,6 +63,7 @@ fun EpisodeBrowser(
     val scope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    val closeDescription = stringResource(CoreR.string.close)
     val performJump = {
         val index =
             findEpisodeIndex(
@@ -79,18 +86,35 @@ fun EpisodeBrowser(
         if (targetIndex >= 0) listState.scrollToItem(targetIndex)
     }
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 stringResource(CoreR.string.episodes),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
             )
+            Spacer(Modifier.weight(1f))
+            onClose?.let {
+                IconButton(
+                    onClick = it,
+                    modifier = Modifier.semantics { contentDescription = closeDescription },
+                ) {
+                    Text("×", style = MaterialTheme.typography.titleLarge)
+                }
+            }
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(
                 onClick = { seasonMenuExpanded = true },
                 enabled = state.seasons.isNotEmpty(),
+                modifier = Modifier.widthIn(max = 96.dp),
             ) {
                 val season = state.seasons.firstOrNull { it.id == state.selectedSeasonId }
-                Text(season?.name ?: stringResource(CoreR.string.season))
+                Text(
+                    season?.name ?: stringResource(CoreR.string.season),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             DropdownMenu(
                 expanded = seasonMenuExpanded,
@@ -113,6 +137,7 @@ fun EpisodeBrowser(
                     TextButton(
                         onClick = { onSelect(continueEpisode) },
                         enabled = !continueEpisode.missing && continueEpisode.canPlay,
+                        modifier = Modifier.widthIn(max = 76.dp),
                     ) {
                         Text(
                             stringResource(
@@ -121,12 +146,32 @@ fun EpisodeBrowser(
                                 } else {
                                     CoreR.string.next_up
                                 }
-                            )
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
+            OutlinedTextField(
+                value = numberInput,
+                onValueChange = { input ->
+                    numberInput = input.filter(Char::isDigit)
+                    numberError = false
+                },
+                placeholder = { Text(stringResource(CoreR.string.episode_number_input)) },
+                singleLine = true,
+                keyboardOptions =
+                    KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { performJump() }),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 52.dp),
+            )
+            TextButton(
+                onClick = { performJump() },
+                modifier = Modifier.widthIn(min = 48.dp),
+            ) {
+                Text(stringResource(CoreR.string.jump))
+            }
         }
-
         if (state.loadingSeasons || state.loadingEpisodes) {
             CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
         }
@@ -139,23 +184,6 @@ fun EpisodeBrowser(
             TextButton(onClick = viewModel::retrySeason) {
                 Text(stringResource(CoreR.string.retry))
             }
-        }
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = numberInput,
-                onValueChange = { input ->
-                    numberInput = input.filter(Char::isDigit)
-                    numberError = false
-                },
-                label = { Text(stringResource(CoreR.string.episode_number_input)) },
-                singleLine = true,
-                keyboardOptions =
-                    KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { performJump() }),
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = { performJump() }) { Text(stringResource(CoreR.string.jump)) }
         }
         if (numberError)
             Text(

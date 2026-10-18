@@ -26,7 +26,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -339,14 +338,6 @@ private fun ShowScreenLayout(
                     color = MaterialTheme.colorScheme.surface,
                 ) {
                     Column(Modifier.fillMaxSize().padding(MaterialTheme.spacings.default)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                        ) {
-                            TextButton(onClick = { episodesDialogOpen = false }) {
-                                Text(stringResource(CoreR.string.close))
-                            }
-                        }
                         episodeBrowserViewModel?.let { browser ->
                             EpisodeBrowser(
                                 viewModel = browser,
@@ -355,6 +346,7 @@ private fun ShowScreenLayout(
                                     onAction(ShowAction.NavigateToItem(it))
                                 },
                                 modifier = Modifier.fillMaxWidth().weight(1f),
+                                onClose = { episodesDialogOpen = false },
                             )
                         }
                     }

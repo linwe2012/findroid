@@ -20,21 +20,25 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.PlayerActivity
+import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummySeason
 import dev.jdtech.jellyfin.film.presentation.season.SeasonAction
 import dev.jdtech.jellyfin.film.presentation.season.SeasonState
@@ -49,7 +53,9 @@ import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
 import dev.jdtech.jellyfin.presentation.theme.FindroidTheme
 import dev.jdtech.jellyfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
+import java.time.LocalDateTime
 import java.util.UUID
+import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.BaseItemKind
 
 @Composable
@@ -96,6 +102,13 @@ private fun SeasonScreenLayout(state: SeasonState, onAction: (SeasonAction) -> U
     val paddingBottom = safePadding.bottom + MaterialTheme.spacings.default
 
     val lazyListState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val recentlyWatchedEpisode =
+        state.episodes
+            .filter { it.lastPlayedDate != null }
+            .maxByOrNull { it.lastPlayedDate ?: LocalDateTime.MIN }
+            ?: state.episodes.firstOrNull { !it.played && it.playbackPositionTicks > 0 }
+            ?: state.episodes.lastOrNull { it.played }
 
     Box(modifier = Modifier.fillMaxSize()) {
         state.season?.let { season ->
@@ -166,6 +179,26 @@ private fun SeasonScreenLayout(state: SeasonState, onAction: (SeasonAction) -> U
                             Modifier.padding(start = paddingStart, end = paddingEnd).fillMaxWidth(),
                         canPlay = state.episodes.isNotEmpty(),
                     )
+                    recentlyWatchedEpisode?.let { episode ->
+                        TextButton(
+                            onClick = {
+                                val episodeIndex =
+                                    state.episodes.indexOfFirst { it.id == episode.id }
+                                if (episodeIndex >= 0) {
+                                    scope.launch {
+                                        lazyListState.animateScrollToItem(episodeIndex + 1)
+                                    }
+                                }
+                            },
+                            modifier = Modifier.padding(start = paddingStart, end = paddingEnd),
+                        ) {
+                            Text(
+                                text = stringResource(CoreR.string.jump_to_recently_watched),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
                 items(items = state.episodes, key = { episode -> episode.id }) { episode ->
                     EpisodeCard(
