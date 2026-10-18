@@ -11,6 +11,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.jellyfin.sdk.model.api.ItemFields
 
 @HiltViewModel
 class EpisodeBrowserViewModel @Inject constructor(private val repository: JellyfinRepository) :
@@ -143,7 +144,12 @@ class EpisodeBrowserViewModel @Inject constructor(private val repository: Jellyf
             _state.value.copy(episodes = emptyList(), loadingEpisodes = true, episodesError = null)
         episodeJob = viewModelScope.launch {
             try {
-                val episodes = repository.getEpisodes(seriesId, seasonId)
+                val episodes =
+                    repository.getEpisodes(
+                        seriesId = seriesId,
+                        seasonId = seasonId,
+                        fields = listOf(ItemFields.OVERVIEW),
+                    )
                 if (request == generation && _state.value.selectedSeasonId == seasonId) {
                     _state.value = _state.value.copy(episodes = episodes, loadingEpisodes = false)
                 }
