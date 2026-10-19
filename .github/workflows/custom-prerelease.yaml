@@ -1,22 +1,22 @@
-name: Custom prerelease APK
+name: Custom release APK
 
 on:
   push:
     tags:
-      - 'v1.1.0-episode-navigation.*'
+      - 'v1.1.0-custom.*'
   workflow_dispatch:
     inputs:
       release_tag:
         description: Release tag to create from this commit
         required: true
-        default: v1.1.0-episode-navigation.1
+        default: v1.1.0-custom.1
 
 permissions:
   contents: read
 
 jobs:
   release:
-    name: Build and release phone arm64 APK
+    name: Build and release signed phone arm64 APK
     runs-on: ubuntu-24.04
     env:
       TAG_NAME: ${{ inputs.release_tag || github.ref_name }}
@@ -41,7 +41,7 @@ jobs:
       - name: Check Kotlin formatting
         run: ./gradlew ktfmtCheck
 
-      - name: Validate prerelease tag
+      - name: Validate custom release tag
         run: |
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
             case "$GITHUB_REF" in
@@ -50,40 +50,63 @@ jobs:
             esac
           fi
           case "$TAG_NAME" in
-            v1.1.0-episode-navigation.*) ;;
-            *) echo "Unsupported prerelease tag: $TAG_NAME" >&2; exit 1 ;;
+            v1.1.0-custom.*) ;;
+            *) echo "Unsupported custom release tag: $TAG_NAME" >&2; exit 1 ;;
           esac
 
-      - name: Configure stable prerelease debug signing
+      - name: Decode private release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.FINDROID_RELEASE_KEYSTORE_BASE64 }}
         run: |
-          mkdir -p "$HOME/.android"
-          cp .github/debug-signing/findroid-prerelease-debug.keystore "$HOME/.android/debug.keystore"
+          test -n "$KEYSTORE_BASE64" || { echo "Missing FINDROID_RELEASE_KEYSTORE_BASE64" >&2; exit 1; }
+          umask 077
+          keystore="$RUNNER_TEMP/findroid-custom-release.p12"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          test -s "$keystore"
+          echo "FINDROID_RELEASE_KEYSTORE=$keystore" >> "$GITHUB_ENV"
 
-      - name: Build phone arm64 debug APK
-        run: ./gradlew :app:phone:assembleLibreDebug "-PprereleaseVersionName=${TAG_NAME#v}+debug"
+      - name: Build signed custom release APK
+        env:
+          STORE_PASSWORD: ${{ secrets.FINDROID_RELEASE_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.FINDROID_RELEASE_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.FINDROID_RELEASE_KEY_ALIAS }}
+        run: |
+          test -n "$STORE_PASSWORD" && test -n "$KEY_PASSWORD" && test -n "$KEY_ALIAS"
+          ./gradlew :app:phone:assembleLibreRelease \
+            "-PcustomRelease=true" \
+            "-PcustomVersionCode=${GITHUB_RUN_NUMBER}" \
+            "-PprereleaseVersionName=${TAG_NAME#v}" \
+            "-Pandroid.injected.signing.store.file=$FINDROID_RELEASE_KEYSTORE" \
+            "-Pandroid.injected.signing.store.password=$STORE_PASSWORD" \
+            "-Pandroid.injected.signing.key.alias=$KEY_ALIAS" \
+            "-Pandroid.injected.signing.key.password=$KEY_PASSWORD"
 
       - name: Prepare release asset
         id: asset
         run: |
-          apk="app/phone/build/outputs/apk/libre/debug/phone-libre-arm64-v8a-debug.apk"
+          apk="app/phone/build/outputs/apk/libre/release/phone-libre-arm64-v8a-release.apk"
           test -f "$apk"
-          asset="Findroid-${TAG_NAME#v}-debug-libre-arm64-v8a.apk"
+          asset="Findroid-${TAG_NAME#v}-custom-libre-arm64-v8a.apk"
           cp "$apk" "$asset"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset" >> "$GITHUB_OUTPUT"
 
-      - name: Create custom debug prerelease
+      - name: Create custom release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cat > release-notes.md <<'EOF'
-          Custom Findroid prerelease containing the episode navigation changes.
+          Custom Findroid release containing the episode navigation changes.
 
-          This is an installable phone arm64 APK signed with this fork's stable, publicly stored debug key. It is a custom debug build, not an official Findroid release. Its application ID has the .debug suffix, so it installs alongside the official app. Repeated builds from this workflow can update the same installation.
+          This is a signed release build for this fork, with minification and resource shrinking enabled. Its application ID has the .custom suffix, so it installs alongside the official app and the existing debug build. Repeated builds signed with the same private release key can update the same installation.
           EOF
           gh release create "${{ steps.asset.outputs.tag_name }}" \
             "${{ steps.asset.outputs.asset_path }}" \
             --target "$GITHUB_SHA" \
             --prerelease \
-            --title "Findroid ${{ steps.asset.outputs.tag_name }} (custom debug build)" \
+            --title "Findroid ${{ steps.asset.outputs.tag_name }} (custom release)" \
             --notes-file release-notes.md
+
+      - name: Remove private keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/findroid-custom-release.p12"

@@ -21,7 +21,10 @@ android {
         minSdk = Versions.MIN_SDK
         targetSdk = Versions.TARGET_SDK
 
-        versionCode = Versions.APP_CODE
+        versionCode =
+            providers.gradleProperty("customVersionCode").orNull?.toIntOrNull()?.let {
+                1_000_000 + it
+            } ?: Versions.APP_CODE
         versionName =
             providers.gradleProperty("prereleaseVersionName").orElse(Versions.APP_NAME).get()
 
@@ -31,6 +34,10 @@ android {
     buildTypes {
         named("debug") { applicationIdSuffix = ".debug" }
         named("release") {
+            if (providers.gradleProperty("customRelease").isPresent) {
+                applicationIdSuffix = ".custom"
+                resValue("string", "app_name", "Findroid Custom")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -69,6 +76,7 @@ android {
 
     buildFeatures {
         buildConfig = true
+        resValues = providers.gradleProperty("customRelease").isPresent
         viewBinding = true
         compose = true
     }
