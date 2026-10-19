@@ -1,7 +1,11 @@
 package dev.jdtech.jellyfin.presentation.film.episodebrowser
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +17,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -20,7 +25,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,6 +36,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
@@ -45,7 +52,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.film.presentation.episodebrowser.EpisodeBrowserViewModel
 import dev.jdtech.jellyfin.film.presentation.episodebrowser.EpisodeNumberRange
+import dev.jdtech.jellyfin.film.presentation.episodebrowser.episodeNumberBands
 import dev.jdtech.jellyfin.film.presentation.episodebrowser.findEpisodeIndex
+import dev.jdtech.jellyfin.film.presentation.episodebrowser.visibleEpisodeBand
 import dev.jdtech.jellyfin.models.FindroidEpisode
 import dev.jdtech.jellyfin.presentation.film.components.Direction
 import dev.jdtech.jellyfin.presentation.film.components.ItemPoster
@@ -65,17 +74,32 @@ fun EpisodeBrowser(
     var numberError by remember { mutableStateOf(false) }
     var showEpisodeDetails by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val episodeRanges =
+        remember(state.episodes) {
+            state.episodes.map {
+                EpisodeNumberRange(it.indexNumber, it.indexNumberEnd ?: it.indexNumber)
+            }
+        }
+    val rangeBands = remember(episodeRanges) { episodeNumberBands(episodeRanges) }
+    var preferredBand by remember { mutableStateOf<Int?>(null) }
+    val selectedBand by remember {
+        androidx.compose.runtime.derivedStateOf {
+            val visibleIndex = listState.layoutInfo.visibleItemsInfo.firstOrNull()?.index
+            visibleIndex
+                ?.let { episodeRanges.getOrNull(it) }
+                ?.let { visibleEpisodeBand(it, rangeBands, preferredBand) }
+        }
+    }
     val scope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    val numberFieldFocusRequester = remember { FocusRequester() }
     val closeDescription = stringResource(CoreR.string.close)
     val performJump = {
         val index =
             findEpisodeIndex(
                 numberInput,
-                state.episodes.map {
-                    EpisodeNumberRange(it.indexNumber, it.indexNumberEnd ?: it.indexNumber)
-                },
+                episodeRanges,
             )
         numberError = index == null
         if (index != null) {
@@ -168,19 +192,67 @@ fun EpisodeBrowser(
                         )
                     }
                 }
-            OutlinedTextField(
-                value = numberInput,
-                onValueChange = { input ->
-                    numberInput = input.filter(Char::isDigit)
-                    numberError = false
-                },
-                placeholder = { Text(stringResource(CoreR.string.episode_number_input)) },
-                singleLine = true,
-                keyboardOptions =
-                    KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { performJump() }),
-                modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 52.dp),
-            )
+            Box(
+                modifier =
+                    Modifier.weight(1f).heightIn(min = 48.dp).clickable {
+                        numberFieldFocusRequester.requestFocus()
+                        keyboardController?.show()
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                val interactionSource = remember { MutableInteractionSource() }
+                val isFocused by interactionSource.collectIsFocusedAsState()
+                BasicTextField(
+                    value = numberInput,
+                    onValueChange = { input ->
+                        numberInput = input.filter(Char::isDigit)
+                        numberError = false
+                    },
+                    singleLine = true,
+                    textStyle =
+                        MaterialTheme.typography.bodyMedium.copy(
+                            color = MaterialTheme.colorScheme.onSurface
+                        ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    keyboardOptions =
+                        KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done,
+                        ),
+                    keyboardActions = KeyboardActions(onDone = { performJump() }),
+                    interactionSource = interactionSource,
+                    modifier =
+                        Modifier.fillMaxWidth()
+                            .heightIn(min = 40.dp)
+                            .focusRequester(numberFieldFocusRequester),
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier =
+                                Modifier.fillMaxWidth()
+                                    .heightIn(min = 40.dp)
+                                    .border(
+                                        width = 1.dp,
+                                        color =
+                                            if (isFocused) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.outline,
+                                        shape = MaterialTheme.shapes.small,
+                                    )
+                                    .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            if (numberInput.isEmpty()) {
+                                Text(
+                                    text = stringResource(CoreR.string.episode_number_input),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+            }
             TextButton(
                 onClick = { performJump() },
                 modifier = Modifier.widthIn(min = 48.dp),
@@ -188,6 +260,16 @@ fun EpisodeBrowser(
                 Text(stringResource(CoreR.string.jump))
             }
         }
+
+        EpisodeRangeChips(
+            bands = rangeBands,
+            selectedBand = selectedBand,
+            onSelect = { band ->
+                preferredBand = (band.start - 1) / 100
+                scope.launch { listState.animateScrollToItem(band.episodeIndex) }
+            },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        )
         if (state.loadingSeasons || state.loadingEpisodes) {
             CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
         }

@@ -19,12 +19,17 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -40,6 +45,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.PlayerActivity
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummySeason
+import dev.jdtech.jellyfin.film.presentation.episodebrowser.EpisodeNumberRange
+import dev.jdtech.jellyfin.film.presentation.episodebrowser.episodeNumberBands
+import dev.jdtech.jellyfin.film.presentation.episodebrowser.visibleEpisodeBand
 import dev.jdtech.jellyfin.film.presentation.season.SeasonAction
 import dev.jdtech.jellyfin.film.presentation.season.SeasonState
 import dev.jdtech.jellyfin.film.presentation.season.SeasonViewModel
@@ -50,6 +58,7 @@ import dev.jdtech.jellyfin.presentation.film.components.ItemButtonsBar
 import dev.jdtech.jellyfin.presentation.film.components.ItemHeader
 import dev.jdtech.jellyfin.presentation.film.components.ItemPoster
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
+import dev.jdtech.jellyfin.presentation.film.episodebrowser.EpisodeRangeChips
 import dev.jdtech.jellyfin.presentation.theme.FindroidTheme
 import dev.jdtech.jellyfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
@@ -103,6 +112,27 @@ private fun SeasonScreenLayout(state: SeasonState, onAction: (SeasonAction) -> U
 
     val lazyListState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val episodeRanges =
+        remember(state.episodes) {
+            state.episodes.map {
+                EpisodeNumberRange(it.indexNumber, it.indexNumberEnd ?: it.indexNumber)
+            }
+        }
+    val rangeBands = remember(episodeRanges) { episodeNumberBands(episodeRanges) }
+    var preferredBand by remember { mutableStateOf<Int?>(null) }
+    val selectedBand by remember {
+        derivedStateOf {
+            val episodeItemsStart = if (rangeBands.isEmpty()) 1 else 2
+            val visibleEpisode =
+                lazyListState.layoutInfo.visibleItemsInfo
+                    .firstOrNull { it.index >= episodeItemsStart }
+                    ?.index
+                    ?.minus(episodeItemsStart)
+            visibleEpisode
+                ?.let { episodeRanges.getOrNull(it) }
+                ?.let { visibleEpisodeBand(it, rangeBands, preferredBand) }
+        }
+    }
     val recentlyWatchedEpisode =
         state.episodes
             .filter { it.lastPlayedDate != null }
@@ -186,7 +216,9 @@ private fun SeasonScreenLayout(state: SeasonState, onAction: (SeasonAction) -> U
                                     state.episodes.indexOfFirst { it.id == episode.id }
                                 if (episodeIndex >= 0) {
                                     scope.launch {
-                                        lazyListState.animateScrollToItem(episodeIndex + 1)
+                                        lazyListState.animateScrollToItem(
+                                            episodeIndex + if (rangeBands.isEmpty()) 1 else 2
+                                        )
                                     }
                                 }
                             },
@@ -196,6 +228,23 @@ private fun SeasonScreenLayout(state: SeasonState, onAction: (SeasonAction) -> U
                                 text = stringResource(CoreR.string.jump_to_recently_watched),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                if (rangeBands.isNotEmpty()) {
+                    stickyHeader {
+                        Surface(color = MaterialTheme.colorScheme.surface) {
+                            EpisodeRangeChips(
+                                bands = rangeBands,
+                                selectedBand = selectedBand,
+                                onSelect = { band ->
+                                    preferredBand = (band.start - 1) / 100
+                                    scope.launch {
+                                        lazyListState.animateScrollToItem(band.episodeIndex + 2)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             )
                         }
                     }
