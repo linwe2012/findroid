@@ -1,0 +1,113 @@
+name: Upload existing preview APK
+
+on:
+  push:
+    branches:
+      - release-upload/preview-cc930036
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SOURCE_SHA: cc9300362c81a9958478a39bd8f3b816176ae981
+      RELEASE_TAG: preview-cc930036
+      APK_FILE: Findroid-Custom-local2-arm64.apk
+      EXPECTED_SHA256: 4b46380b39887a43b2906e4517483d3d758b777dc2613ea035fd25d2d9242014
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify existing signed APK
+        run: |
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$APK_FILE" | sha256sum --check --status
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$APK_FILE" > SHA256SUMS
+
+      - name: Create or verify source tag
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPOSITORY/commits/$SOURCE_SHA" >/dev/null
+          if gh api "repos/$REPOSITORY/git/ref/tags/$RELEASE_TAG" > /tmp/tag.json 2>/dev/null; then
+            actual=$(jq -r '.object.sha' /tmp/tag.json)
+            object_type=$(jq -r '.object.type' /tmp/tag.json)
+            while [ "$object_type" = tag ]; do
+              gh api "repos/$REPOSITORY/git/tags/$actual" > /tmp/tag-object.json
+              actual=$(jq -r '.object.sha' /tmp/tag-object.json)
+              object_type=$(jq -r '.object.type' /tmp/tag-object.json)
+            done
+            test "$actual" = "$SOURCE_SHA" || {
+              echo "Tag $RELEASE_TAG already points to $actual; refusing to move it." >&2
+              exit 1
+            }
+          else
+            gh api --method POST "repos/$REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$SOURCE_SHA" >/dev/null
+          fi
+
+      - name: Prepare draft release
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            echo "Release for $RELEASE_TAG already exists."
+          else
+            # Reuse only the known existing draft, matched by its exact title,
+            # target branch, and version marker. Leave unrelated drafts alone.
+            gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100" \
+              | jq 'add' > /tmp/releases.json
+            mapfile -t drafts < <(jq -r '
+              .[] | select(
+                .draft == true and (.tag_name == "" or .tag_name == null) and
+                .name == "Findroid Custom — compact input and episode range jumps" and
+                .target_commitish == "feature/episode-navigation" and
+                ((.body // "") | contains("1.1.0-custom.local2"))
+              ) | .id
+            ' /tmp/releases.json)
+            if [ "${#drafts[@]}" -gt 1 ]; then
+              echo "Multiple drafts match the known existing draft identity; refusing to guess." >&2
+              exit 1
+            elif [ "${#drafts[@]}" -eq 1 ]; then
+              gh api --method PATCH "repos/$REPOSITORY/releases/${drafts[0]}" \
+                -f "tag_name=$RELEASE_TAG" -f "target_commitish=$SOURCE_SHA" \
+                -f "name=Findroid preview cc930036" \
+                -F "body=@release-notes.md" >/dev/null
+            else
+              gh release create "$RELEASE_TAG" --repo "$REPOSITORY" --draft --prerelease \
+                --target "$SOURCE_SHA" --title "Findroid preview cc930036" \
+                --notes-file release-notes.md
+            fi
+          fi
+
+      - name: Upload assets and publish
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          # Existing same-name assets are accepted only when their downloaded
+          # bytes match the expected checksum. Different bytes stop the job.
+          for asset in "$APK_FILE" SHA256SUMS; do
+            asset_id=$(gh api --paginate "repos/$REPOSITORY/releases/tags/$RELEASE_TAG" \
+              | jq -r --arg name "$asset" '.assets[]? | select(.name == $name) | .id' | head -n 1)
+            if [ -n "$asset_id" ]; then
+              curl --fail --silent --show-error -L \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/octet-stream" \
+                "https://api.github.com/repos/$REPOSITORY/releases/assets/$asset_id" \
+                -o "/tmp/$asset"
+              if [ "$asset" = "$APK_FILE" ]; then
+                printf '%s  %s\n' "$EXPECTED_SHA256" "/tmp/$asset" | sha256sum --check --status || {
+                  echo "Existing APK asset differs from the verified local APK." >&2; exit 1;
+                }
+              else
+                cmp -s SHA256SUMS "/tmp/$asset" || { echo "Existing SHA256SUMS differs." >&2; exit 1; }
+              fi
+            else
+              gh release upload "$RELEASE_TAG" "$asset" --repo "$REPOSITORY"
+            fi
+          done
+          gh release edit "$RELEASE_TAG" --repo "$REPOSITORY" --draft=false --prerelease
+
