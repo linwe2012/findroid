@@ -69,7 +69,7 @@ jobs:
         run: |
           apk="app/phone/build/outputs/apk/libre/release/phone-libre-arm64-v8a-release.apk"
           test -f "$apk"
-          asset="Findroid-${TAG_NAME#v}-fork-release-libre-arm64-v8a.apk"
+          asset="Findroid-${TAG_NAME#v}-release-libre-arm64-v8a.apk"
           cp "$apk" "$asset"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset" >> "$GITHUB_OUTPUT"
