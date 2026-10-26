@@ -1,0 +1,91 @@
+name: Fork release APK
+
+on:
+  push:
+    tags:
+      - 'v1.1.0-episode-navigation.*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to create from this commit
+        required: true
+        default: v1.1.0-episode-navigation.6
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and release signed phone arm64 APK
+    runs-on: ubuntu-24.04
+    env:
+      TAG_NAME: ${{ inputs.release_tag || github.ref_name }}
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Validate fork release tag
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            case "$GITHUB_REF" in
+              refs/heads/main|refs/heads/feature/episode-navigation) ;;
+              *) echo "Dispatch from main or feature/episode-navigation only" >&2; exit 1 ;;
+            esac
+          fi
+          case "$TAG_NAME" in
+            v1.1.0-episode-navigation.*) ;;
+            *) echo "Unsupported fork release tag: $TAG_NAME" >&2; exit 1 ;;
+          esac
+          release_number="${TAG_NAME##*.}"
+          case "$release_number" in
+            ''|*[!0-9]*) echo "Release tag must end in a numeric patch version" >&2; exit 1 ;;
+          esac
+          echo "FORK_RELEASE_VERSION_CODE=$((1000000 + release_number))" >> "$GITHUB_ENV"
+
+      - name: Build fork release APK
+        run: |
+          ./gradlew :app:phone:assembleLibreRelease \
+            "-PforkRelease=true" \
+            "-PforkReleaseVersionCode=${FORK_RELEASE_VERSION_CODE}" \
+            "-PprereleaseVersionName=${TAG_NAME#v}" \
+            "-Pandroid.injected.signing.store.file=.github/debug-signing/findroid-prerelease-debug.keystore" \
+            "-Pandroid.injected.signing.store.password=android" \
+            "-Pandroid.injected.signing.key.alias=androiddebugkey" \
+            "-Pandroid.injected.signing.key.password=android"
+
+      - name: Prepare release asset
+        id: asset
+        run: |
+          apk="app/phone/build/outputs/apk/libre/release/phone-libre-arm64-v8a-release.apk"
+          test -f "$apk"
+          asset="Findroid-${TAG_NAME#v}-fork-release-libre-arm64-v8a.apk"
+          cp "$apk" "$asset"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "asset_path=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Create fork release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          Findroid fork release containing the episode navigation changes.
+
+          This release build has minification and resource shrinking enabled. It preserves this fork's existing debug app identity (`dev.jdtech.jellyfin.debug`, `Findroid Debug`) and is signed with the fork's existing public test key so it can update prior episode-navigation prereleases. The test key is publicly available in this repository and must not be treated as a secure production signing key. It is not an official Findroid release.
+          EOF
+          gh release create "${{ steps.asset.outputs.tag_name }}" \
+            "${{ steps.asset.outputs.asset_path }}" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Findroid ${{ steps.asset.outputs.tag_name }} (fork release; compatible signature)" \
+            --notes-file release-notes.md
