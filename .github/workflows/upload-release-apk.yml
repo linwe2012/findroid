@@ -1,0 +1,97 @@
+name: Publish verified identity-restored APK
+
+on:
+  push:
+    branches:
+      - release-upload/identity-restored.6
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPOSITORY: ${{ github.repository }}
+      SOURCE_SHA: 51cbb92df377b357a53a4e0c4174477ec9cfe060
+      RELEASE_TAG: v1.1.0-episode-navigation.6
+      APK_FILE: Findroid-1.1.0-episode-navigation.6-release-libre-arm64-v8a.apk
+      EXPECTED_SHA256: 666a7119cdac64a287908a98b15580ee06bcf23eb5b394ff9c875c58e026ec48
+      RELEASE_TITLE: Findroid — episode navigation .6 (Release, existing fork identity)
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify existing signed APK
+        run: |
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$APK_FILE" | sha256sum --check --status
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$APK_FILE" > SHA256SUMS
+
+      - name: Verify existing source tag without changing it
+        run: |
+          gh api "repos/$REPOSITORY/commits/$SOURCE_SHA" >/dev/null
+          gh api "repos/$REPOSITORY/git/ref/tags/$RELEASE_TAG" > /tmp/tag.json
+          actual=$(jq -r '.object.sha' /tmp/tag.json)
+          object_type=$(jq -r '.object.type' /tmp/tag.json)
+          while [ "$object_type" = tag ]; do
+            gh api "repos/$REPOSITORY/git/tags/$actual" > /tmp/tag-object.json
+            actual=$(jq -r '.object.sha' /tmp/tag-object.json)
+            object_type=$(jq -r '.object.type' /tmp/tag-object.json)
+          done
+          test "$object_type" = commit && test "$actual" = "$SOURCE_SHA" || {
+            echo "Existing tag $RELEASE_TAG does not peel to expected source $SOURCE_SHA; refusing to publish." >&2
+            exit 1
+          }
+
+      - name: Prepare the prerelease draft
+        run: |
+          if gh api "repos/$REPOSITORY/releases/tags/$RELEASE_TAG" > /tmp/release.json 2>/dev/null; then
+            jq -e --arg tag "$RELEASE_TAG" --arg title "$RELEASE_TITLE" '
+              .tag_name == $tag and .name == $title and .prerelease == true
+            ' /tmp/release.json >/dev/null || {
+              echo "A release already exists for this tag with unexpected metadata; refusing to edit it." >&2
+              exit 1
+            }
+          else
+            gh release create "$RELEASE_TAG" --repo "$REPOSITORY" \
+              --draft --prerelease --verify-tag --target "$SOURCE_SHA" \
+              --title "$RELEASE_TITLE" --notes-file release-notes.md
+          fi
+
+      - name: Upload assets and publish
+        run: |
+          # Existing assets are accepted only when their bytes match this
+          # verified local artifact. Conflicting assets stop the workflow.
+          for asset in "$APK_FILE" SHA256SUMS; do
+            gh api "repos/$REPOSITORY/releases/tags/$RELEASE_TAG" > /tmp/release.json
+            asset_id=$(jq -r --arg name "$asset" '.assets[]? | select(.name == $name) | .id' /tmp/release.json | head -n 1)
+            if [ -n "$asset_id" ]; then
+              curl --fail --silent --show-error -L \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/octet-stream" \
+                "https://api.github.com/repos/$REPOSITORY/releases/assets/$asset_id" \
+                -o "/tmp/$asset"
+              if [ "$asset" = "$APK_FILE" ]; then
+                printf '%s  %s\n' "$EXPECTED_SHA256" "/tmp/$asset" | sha256sum --check --status || {
+                  echo "Existing APK asset differs from the verified artifact." >&2; exit 1;
+                }
+              else
+                cmp -s SHA256SUMS "/tmp/$asset" || {
+                  echo "Existing SHA256SUMS differs from the verified artifact." >&2; exit 1;
+                }
+              fi
+            else
+              gh release upload "$RELEASE_TAG" "$asset" --repo "$REPOSITORY"
+            fi
+          done
+
+          gh release edit "$RELEASE_TAG" --repo "$REPOSITORY" --draft=false --prerelease
+          gh api "repos/$REPOSITORY/releases/tags/$RELEASE_TAG" > /tmp/final-release.json
+          jq -e --arg tag "$RELEASE_TAG" --arg title "$RELEASE_TITLE" --arg apk "$APK_FILE" '
+            .tag_name == $tag and .name == $title and
+            .draft == false and .prerelease == true and
+            any(.assets[]?; .name == $apk)
+          ' /tmp/final-release.json >/dev/null
+
