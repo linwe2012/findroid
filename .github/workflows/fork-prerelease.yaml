@@ -59,7 +59,7 @@ jobs:
             "-PforkRelease=true" \
             "-PforkReleaseVersionCode=${FORK_RELEASE_VERSION_CODE}" \
             "-PprereleaseVersionName=${TAG_NAME#v}" \
-            "-Pandroid.injected.signing.store.file=.github/debug-signing/findroid-prerelease-debug.keystore" \
+            "-Pandroid.injected.signing.store.file=${GITHUB_WORKSPACE}/.github/debug-signing/findroid-prerelease-debug.keystore" \
             "-Pandroid.injected.signing.store.password=android" \
             "-Pandroid.injected.signing.key.alias=androiddebugkey" \
             "-Pandroid.injected.signing.key.password=android"
