@@ -1,9 +1,7 @@
 name: Fork release APK
 
 on:
-  push:
-    tags:
-      - 'v1.1.0-episode-navigation.*'
+  # Publication uses the verified existing-release uploader because GITHUB_TOKEN cannot create releases.
   workflow_dispatch:
     inputs:
       release_tag:
