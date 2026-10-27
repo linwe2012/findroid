@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="player_controls_compact_bottom_margin">76dp</dimen>
+    <dimen name="player_controls_compact_button_gap">4dp</dimen>
+    <dimen name="player_controls_min_touch_target">48dp</dimen>
+    <dimen name="player_controls_compact_scrim_height">172dp</dimen>
+</resources>

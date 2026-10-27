@@ -108,6 +108,9 @@
     <string name="none">None</string>
     <string name="edit_file_title">Edit %1$s</string>
     <string name="pref_player_backend">Player backend</string>
+    <string name="player_controls_layout">Player controls layout</string>
+    <string name="player_controls_centered">Centered</string>
+    <string name="player_controls_compact_bottom">Compact bottom</string>
     <string name="playback_speed">Playback speed</string>
     <string name="playback_speed_summary">Choose the default speed and speeds shown in the player</string>
     <string name="playback_speeds">Available speeds (comma or space separated)</string>

@@ -282,6 +282,17 @@ class SettingsViewModel @Inject constructor(private val appPreferences: AppPrefe
                                                     options = R.array.player_backends,
                                                     optionValues = R.array.player_backends,
                                                 ),
+                                                PreferenceSelect(
+                                                    nameStringResource =
+                                                        R.string.player_controls_layout,
+                                                    supportedDeviceTypes = listOf(DeviceType.PHONE),
+                                                    backendPreference =
+                                                        appPreferences.playerControlsLayout,
+                                                    options =
+                                                        R.array.player_controls_layout_options,
+                                                    optionValues =
+                                                        R.array.player_controls_layout_values,
+                                                ),
                                                 PreferenceCategory(
                                                     nameStringResource = R.string.mpv_options,
                                                     onClick = {

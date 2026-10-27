@@ -7,6 +7,9 @@
     <string name="settings_preferred_subtitle_language">偏好字幕语言</string>
     <string name="settings_category_servers">服务器</string>
     <string name="settings_category_player">播放器</string>
+    <string name="player_controls_layout">播放器控制布局</string>
+    <string name="player_controls_centered">居中</string>
+    <string name="player_controls_compact_bottom">底部紧凑</string>
     <string name="playback_speed">播放速度</string>
     <string name="playback_speed_summary">设置默认速度和播放器中显示的速度选项</string>
     <string name="playback_speeds">可用速度（用逗号或空格分隔）</string>

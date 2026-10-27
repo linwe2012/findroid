@@ -5,6 +5,7 @@ import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Rect
@@ -15,6 +16,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import android.util.Rational
+import android.view.Gravity
 import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
@@ -22,6 +24,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.Space
 import android.widget.TextView
 import android.widget.Toast
@@ -40,6 +43,7 @@ import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerControlView
 import androidx.media3.ui.PlayerView
 import dagger.hilt.android.AndroidEntryPoint
+import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.databinding.ActivityPlayerBinding
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
@@ -105,6 +109,7 @@ class PlayerActivity : BasePlayerActivity() {
 
         binding = ActivityPlayerBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        configurePlayerControlsLayout()
         if (itemKind == org.jellyfin.sdk.model.api.BaseItemKind.MOVIE.serialName) {
             binding.playerView.findViewById<TextView>(R.id.btn_episodes).isVisible = false
         }
@@ -380,6 +385,44 @@ class PlayerActivity : BasePlayerActivity() {
             startFromBeginning = startFromBeginning,
         )
         hideSystemUI()
+    }
+
+    private fun configurePlayerControlsLayout() {
+        if (appPreferences.getValue(appPreferences.playerControlsLayout) != "compact_bottom") {
+            return
+        }
+
+        binding.playerView
+            .findViewById<View>(R.id.player_controls)
+            .setBackgroundColor(Color.TRANSPARENT)
+        binding.playerView.findViewById<View>(R.id.compact_bottom_scrim).isVisible = true
+
+        val transportControls =
+            binding.playerView.findViewById<LinearLayout>(R.id.transport_controls)
+        val layoutParams = transportControls.layoutParams as FrameLayout.LayoutParams
+        layoutParams.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        layoutParams.bottomMargin =
+            resources.getDimensionPixelSize(R.dimen.player_controls_compact_bottom_margin)
+        transportControls.layoutParams = layoutParams
+
+        val minimumTouchTarget =
+            resources.getDimensionPixelSize(R.dimen.player_controls_min_touch_target)
+        val compactButtonGap =
+            resources.getDimensionPixelSize(R.dimen.player_controls_compact_button_gap)
+        for (index in 0 until transportControls.childCount) {
+            val button = transportControls.getChildAt(index) as? ImageButton ?: continue
+            button.minimumWidth = minimumTouchTarget
+            button.minimumHeight = minimumTouchTarget
+            val buttonParams = button.layoutParams as LinearLayout.LayoutParams
+            if (buttonParams.marginStart > 0) buttonParams.marginStart = compactButtonGap
+            if (buttonParams.marginEnd > 0) buttonParams.marginEnd = compactButtonGap
+            button.layoutParams = buttonParams
+        }
+
+        binding.playerView.findViewById<ImageButton>(R.id.exo_play_pause).apply {
+            setBackgroundResource(CoreR.drawable.transparent_circle_background)
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

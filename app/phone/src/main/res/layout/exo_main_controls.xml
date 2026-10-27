@@ -7,6 +7,14 @@
     android:layout_height="match_parent"
     android:background="@color/player_background">
 
+    <View
+        android:id="@+id/compact_bottom_scrim"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/player_controls_compact_scrim_height"
+        android:layout_gravity="bottom"
+        android:background="@drawable/player_controls_bottom_gradient"
+        android:visibility="gone" />
+
     <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -145,6 +153,7 @@
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <LinearLayout
+        android:id="@+id/transport_controls"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
