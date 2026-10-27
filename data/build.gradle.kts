@@ -39,5 +39,10 @@ dependencies {
     implementation(libs.jellyfin.core)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.okhttp)
     implementation(libs.timber)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver3:5.5.1")
+    testImplementation(libs.slf4j.api)
+    testImplementation("org.slf4j:slf4j-nop:2.0.20")
 }
