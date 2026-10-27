@@ -7,6 +7,11 @@
     <string name="settings_preferred_subtitle_language">偏好字幕语言</string>
     <string name="settings_category_servers">服务器</string>
     <string name="settings_category_player">播放器</string>
+    <string name="playback_speed">播放速度</string>
+    <string name="playback_speed_summary">设置默认速度和播放器中显示的速度选项</string>
+    <string name="playback_speeds">可用速度（用逗号或空格分隔）</string>
+    <string name="playback_default_speed">默认速度</string>
+    <string name="playback_speed_invalid">请输入 0.25x 到 4x 之间且不重复的速度，并确保默认速度包含在列表中。</string>
     <string name="settings_category_download">下载</string>
     <string name="settings_category_appearance">外观</string>
     <string name="settings_category_device">设备</string>

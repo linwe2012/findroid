@@ -27,6 +27,7 @@ import dev.jdtech.jellyfin.settings.presentation.models.PreferenceGroup
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceMultiSelect
+import dev.jdtech.jellyfin.settings.presentation.models.PreferencePlaybackSpeed
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
 import dev.jdtech.jellyfin.settings.presentation.settings.SettingsAction
@@ -115,6 +116,12 @@ fun SettingsGroupCard(
                     is PreferenceFileEdit ->
                         SettingsFileEditCard(
                             preference = preference,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    is PreferencePlaybackSpeed ->
+                        SettingsPlaybackSpeedCard(
+                            preference = preference,
+                            onUpdate = { onAction(SettingsAction.OnUpdate(it)) },
                             modifier = Modifier.fillMaxWidth(),
                         )
                 }

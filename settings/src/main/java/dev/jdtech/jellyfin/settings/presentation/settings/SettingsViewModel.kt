@@ -16,6 +16,7 @@ import dev.jdtech.jellyfin.settings.presentation.models.PreferenceGroup
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceMultiSelect
+import dev.jdtech.jellyfin.settings.presentation.models.PreferencePlaybackSpeed
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
 import javax.inject.Inject
@@ -443,6 +444,29 @@ class SettingsViewModel @Inject constructor(private val appPreferences: AppPrefe
                                                         appPreferences.playerGesturesStartMaximized,
                                                 ),
                                             ),
+                                    ),
+                                    PreferenceGroup(
+                                        preferences =
+                                            listOf(
+                                                PreferencePlaybackSpeed(
+                                                    nameStringResource = R.string.playback_speed,
+                                                    descriptionStringRes =
+                                                        R.string.playback_speed_summary,
+                                                    speedsPreference =
+                                                        appPreferences.playerPlaybackSpeeds,
+                                                    defaultSpeedPreference =
+                                                        appPreferences.playerDefaultPlaybackSpeed,
+                                                    speeds =
+                                                        appPreferences.getValue(
+                                                            appPreferences.playerPlaybackSpeeds
+                                                        ),
+                                                    defaultSpeed =
+                                                        appPreferences.getValue(
+                                                            appPreferences
+                                                                .playerDefaultPlaybackSpeed
+                                                        ),
+                                                )
+                                            )
                                     ),
                                     PreferenceGroup(
                                         nameStringResource = R.string.seeking,
@@ -892,6 +916,23 @@ class SettingsViewModel @Inject constructor(private val appPreferences: AppPrefe
                                                         ),
                                                 )
                                             }
+                                            is PreferencePlaybackSpeed -> {
+                                                preference.copy(
+                                                    enabled =
+                                                        preference.enabled &&
+                                                            preference.dependencies.all {
+                                                                appPreferences.getValue(it)
+                                                            },
+                                                    speeds =
+                                                        appPreferences.getValue(
+                                                            preference.speedsPreference
+                                                        ),
+                                                    defaultSpeed =
+                                                        appPreferences.getValue(
+                                                            preference.defaultSpeedPreference
+                                                        ),
+                                                )
+                                            }
                                             else -> preference
                                         }
                                     }
@@ -932,6 +973,16 @@ class SettingsViewModel @Inject constructor(private val appPreferences: AppPrefe
                             action.preference.backendPreference,
                             action.preference.value,
                         )
+                    is PreferencePlaybackSpeed -> {
+                        appPreferences.setValue(
+                            action.preference.speedsPreference,
+                            action.preference.speeds,
+                        )
+                        appPreferences.setValue(
+                            action.preference.defaultSpeedPreference,
+                            action.preference.defaultSpeed,
+                        )
+                    }
                 }
             }
             else -> Unit

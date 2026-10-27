@@ -9,7 +9,7 @@ on:
       release_tag:
         description: Release tag to create from this commit
         required: true
-        default: v1.1.0-episode-navigation.6
+        default: v1.1.0-episode-navigation.7
 
 permissions:
   contents: read
@@ -51,7 +51,8 @@ jobs:
           case "$release_number" in
             ''|*[!0-9]*) echo "Release tag must end in a numeric patch version" >&2; exit 1 ;;
           esac
-          echo "FORK_RELEASE_VERSION_CODE=$((1000000 + release_number))" >> "$GITHUB_ENV"
+          # build.gradle.kts adds the 1,000,000 fork-release offset.
+          echo "FORK_RELEASE_VERSION_CODE=$((10#$release_number))" >> "$GITHUB_ENV"
 
       - name: Build fork release APK
         run: |

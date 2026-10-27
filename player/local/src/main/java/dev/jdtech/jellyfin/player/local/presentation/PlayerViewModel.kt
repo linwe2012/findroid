@@ -11,6 +11,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -28,6 +29,7 @@ import dev.jdtech.jellyfin.player.local.mpv.MPVPlayer
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.Constants
+import dev.jdtech.jellyfin.settings.domain.PlaybackSpeeds
 import java.util.UUID
 import javax.inject.Inject
 import kotlin.math.ceil
@@ -106,6 +108,15 @@ constructor(
     private var segmentsAutoSkipMode: String = "always"
 
     var playbackSpeed: Float = 1f
+    val availablePlaybackSpeeds: List<Float> =
+        PlaybackSpeeds.parse(appPreferences.getValue(appPreferences.playerPlaybackSpeeds))
+            ?: PlaybackSpeeds.parse(PlaybackSpeeds.DEFAULT)!!
+    private val defaultPlaybackSpeed: Float =
+        appPreferences.getValue(appPreferences.playerDefaultPlaybackSpeed).toFloatOrNull()?.takeIf {
+            it.isFinite() &&
+                it in PlaybackSpeeds.MIN..PlaybackSpeeds.MAX &&
+                it in availablePlaybackSpeeds
+        } ?: availablePlaybackSpeeds.firstOrNull { it == 1f } ?: availablePlaybackSpeeds.first()
 
     var isInPictureInPictureMode: Boolean = false
 
@@ -224,6 +235,8 @@ constructor(
                 }
 
             player.setMediaItems(mediaItems, 0, startPosition)
+            player.setPlaybackSpeed(defaultPlaybackSpeed)
+            playbackSpeed = defaultPlaybackSpeed
             player.prepare()
             player.play()
         }
@@ -474,6 +487,10 @@ constructor(
             }
         }
         Timber.d("Changed player state to $stateString")
+    }
+
+    override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+        this.playbackSpeed = playbackParameters.speed
     }
 
     override fun onCleared() {
