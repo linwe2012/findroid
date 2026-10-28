@@ -1,5 +1,5 @@
 Adds configurable playback control button size, control background dimming, and controller auto-hide time for the shared MPV/Media3 UI. Retains the centered and compact-bottom layouts, playback speed selection, and Jellyfin media-stream compatibility fixes.
 
-The Release build and Kotlin formatting check passed. Emulator verification confirmed the shared controls selection with ExoPlayer. Runtime checks for control auto-hide and glyph rendering remain pending; no MPV runtime pass is claimed.
+The Release build and Kotlin formatting check passed. Runtime verification used a debug UI build and the signed Release build with a Jellyfin fixture: login, settings, and ExoPlayer playback worked. In compact-bottom layout at 360dp, Large controls were visible without clipping; 0% dimming left the video unshaded. A 3-second timeout hid controls after about 4 seconds, and Never kept them visible for 9 seconds. No strict same-layout pixel-size comparison is claimed. MPV runtime verification is not claimed: the .9 baseline emulator run encountered an ANR.
 
 The optimized Release asset keeps the existing fork app identity (`dev.jdtech.jellyfin.debug`, **Findroid Debug**) and existing fork signing certificate. It is not an official Findroid release.
