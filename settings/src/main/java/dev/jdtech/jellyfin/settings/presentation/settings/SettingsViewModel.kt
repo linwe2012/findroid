@@ -305,6 +305,17 @@ class SettingsViewModel @Inject constructor(private val appPreferences: AppPrefe
                                                 ),
                                                 PreferenceSelect(
                                                     nameStringResource =
+                                                        R.string.player_controls_contrast,
+                                                    supportedDeviceTypes = listOf(DeviceType.PHONE),
+                                                    backendPreference =
+                                                        appPreferences.playerControlsContrast,
+                                                    options =
+                                                        R.array.player_controls_contrast_options,
+                                                    optionValues =
+                                                        R.array.player_controls_contrast_values,
+                                                ),
+                                                PreferenceSelect(
+                                                    nameStringResource =
                                                         R.string.player_controls_opacity,
                                                     supportedDeviceTypes = listOf(DeviceType.PHONE),
                                                     backendPreference =

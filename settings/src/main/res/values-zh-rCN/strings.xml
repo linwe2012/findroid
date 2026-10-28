@@ -14,6 +14,11 @@
     <string name="player_controls_size_small">小</string>
     <string name="player_controls_size_standard">标准</string>
     <string name="player_controls_size_large">大</string>
+    <string name="player_controls_contrast">控件对比度</string>
+    <string name="player_controls_contrast_none">无</string>
+    <string name="player_controls_contrast_buttons">按钮底色</string>
+    <string name="player_controls_contrast_gradient">底部渐变</string>
+    <string name="player_controls_contrast_both">两者</string>
     <string name="player_controls_opacity">控件背景遮罩强度</string>
     <string name="player_controls_opacity_default">默认</string>
     <string name="player_controls_timeout">控制栏隐藏时间</string>

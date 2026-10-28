@@ -115,6 +115,11 @@
     <string name="player_controls_size_small">Small</string>
     <string name="player_controls_size_standard">Standard</string>
     <string name="player_controls_size_large">Large</string>
+    <string name="player_controls_contrast">Control contrast</string>
+    <string name="player_controls_contrast_none">None</string>
+    <string name="player_controls_contrast_buttons">Button backplates</string>
+    <string name="player_controls_contrast_gradient">Bottom gradient</string>
+    <string name="player_controls_contrast_both">Both</string>
     <string name="player_controls_opacity">Control background dimming</string>
     <string name="player_controls_opacity_default">Default</string>
     <string name="player_controls_timeout">Controls hide after</string>

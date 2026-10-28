@@ -15,6 +15,14 @@
         android:background="@drawable/player_controls_bottom_gradient"
         android:visibility="gone" />
 
+    <View
+        android:id="@+id/control_contrast_scrim"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/player_controls_compact_scrim_height"
+        android:layout_gravity="bottom"
+        android:background="@drawable/player_controls_bottom_gradient"
+        android:visibility="gone" />
+
     <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

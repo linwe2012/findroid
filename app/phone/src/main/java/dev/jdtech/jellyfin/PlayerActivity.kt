@@ -393,9 +393,30 @@ class PlayerActivity : BasePlayerActivity() {
     private fun configurePlayerControlsLayout() {
         val controls = binding.playerView.findViewById<View>(R.id.player_controls)
         val opacity = appPreferences.getValue(appPreferences.playerControlsOpacity)
+        val contrast = appPreferences.getValue(appPreferences.playerControlsContrast)
         val compact =
             appPreferences.getValue(appPreferences.playerControlsLayout) == "compact_bottom"
         val scrim = binding.playerView.findViewById<View>(R.id.compact_bottom_scrim)
+        val contrastScrim = binding.playerView.findViewById<View>(R.id.control_contrast_scrim)
+
+        val showButtonBackplates = contrast == "buttons" || contrast == "both"
+        val showBottomGradient = contrast == "gradient" || contrast == "both"
+        contrastScrim.isVisible = showBottomGradient
+        contrastScrim.alpha = 0.7f
+        val contrastButtonIds =
+            intArrayOf(
+                R.id.back_button,
+                R.id.btn_lockview,
+                R.id.btn_pip,
+                R.id.btn_speed,
+                R.id.btn_audio_track,
+                R.id.btn_subtitle,
+                R.id.exo_prev,
+                R.id.exo_rew,
+                R.id.exo_ffwd,
+                R.id.exo_next,
+                R.id.exo_play_pause,
+            )
 
         if (opacity != "default") {
             val alpha = (opacity.toIntOrNull() ?: 100).coerceIn(0, 100) / 100f
@@ -429,9 +450,25 @@ class PlayerActivity : BasePlayerActivity() {
             }
 
             binding.playerView.findViewById<ImageButton>(R.id.exo_play_pause).apply {
-                setBackgroundResource(CoreR.drawable.transparent_circle_background)
-                imageTintList = ColorStateList.valueOf(Color.WHITE)
+                if (!showButtonBackplates) {
+                    setBackgroundResource(CoreR.drawable.transparent_circle_background)
+                    imageTintList = ColorStateList.valueOf(Color.WHITE)
+                }
             }
+        }
+
+        for (buttonId in contrastButtonIds) {
+            binding.playerView.findViewById<ImageButton>(buttonId)?.apply {
+                if (showButtonBackplates) {
+                    setBackgroundResource(R.drawable.player_controls_button_backplate)
+                    imageTintList = ColorStateList.valueOf(Color.WHITE)
+                }
+            }
+        }
+        if (showButtonBackplates) {
+            binding.playerView
+                .findViewById<TextView>(R.id.btn_episodes)
+                ?.setBackgroundResource(R.drawable.player_controls_text_backplate)
         }
 
         val requestedSize = appPreferences.getValue(appPreferences.playerControlsSize)

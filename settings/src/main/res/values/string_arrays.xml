@@ -32,6 +32,18 @@
         <item>standard</item>
         <item>large</item>
     </string-array>
+    <string-array name="player_controls_contrast_options">
+        <item>@string/player_controls_contrast_none</item>
+        <item>@string/player_controls_contrast_buttons</item>
+        <item>@string/player_controls_contrast_gradient</item>
+        <item>@string/player_controls_contrast_both</item>
+    </string-array>
+    <string-array name="player_controls_contrast_values">
+        <item>none</item>
+        <item>buttons</item>
+        <item>gradient</item>
+        <item>both</item>
+    </string-array>
     <string-array name="player_controls_opacity_options">
         <item>@string/player_controls_opacity_default</item>
         <item>0%</item>
