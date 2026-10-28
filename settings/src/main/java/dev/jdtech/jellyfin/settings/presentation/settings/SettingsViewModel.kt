@@ -293,6 +293,38 @@ class SettingsViewModel @Inject constructor(private val appPreferences: AppPrefe
                                                     optionValues =
                                                         R.array.player_controls_layout_values,
                                                 ),
+                                                PreferenceSelect(
+                                                    nameStringResource =
+                                                        R.string.player_controls_size,
+                                                    supportedDeviceTypes = listOf(DeviceType.PHONE),
+                                                    backendPreference =
+                                                        appPreferences.playerControlsSize,
+                                                    options = R.array.player_controls_size_options,
+                                                    optionValues =
+                                                        R.array.player_controls_size_values,
+                                                ),
+                                                PreferenceSelect(
+                                                    nameStringResource =
+                                                        R.string.player_controls_opacity,
+                                                    supportedDeviceTypes = listOf(DeviceType.PHONE),
+                                                    backendPreference =
+                                                        appPreferences.playerControlsOpacity,
+                                                    options =
+                                                        R.array.player_controls_opacity_options,
+                                                    optionValues =
+                                                        R.array.player_controls_opacity_values,
+                                                ),
+                                                PreferenceSelect(
+                                                    nameStringResource =
+                                                        R.string.player_controls_timeout,
+                                                    supportedDeviceTypes = listOf(DeviceType.PHONE),
+                                                    backendPreference =
+                                                        appPreferences.playerControlsTimeout,
+                                                    options =
+                                                        R.array.player_controls_timeout_options,
+                                                    optionValues =
+                                                        R.array.player_controls_timeout_values,
+                                                ),
                                                 PreferenceCategory(
                                                     nameStringResource = R.string.mpv_options,
                                                     onClick = {

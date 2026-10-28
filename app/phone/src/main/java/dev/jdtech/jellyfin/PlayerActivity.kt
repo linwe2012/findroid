@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.media.AudioManager
 import android.os.Build
@@ -110,6 +111,8 @@ class PlayerActivity : BasePlayerActivity() {
         binding = ActivityPlayerBinding.inflate(layoutInflater)
         setContentView(binding.root)
         configurePlayerControlsLayout()
+        binding.playerView.controllerShowTimeoutMs =
+            appPreferences.getValue(appPreferences.playerControlsTimeout).toIntOrNull() ?: 5000
         if (itemKind == org.jellyfin.sdk.model.api.BaseItemKind.MOVIE.serialName) {
             binding.playerView.findViewById<TextView>(R.id.btn_episodes).isVisible = false
         }
@@ -388,40 +391,118 @@ class PlayerActivity : BasePlayerActivity() {
     }
 
     private fun configurePlayerControlsLayout() {
-        if (appPreferences.getValue(appPreferences.playerControlsLayout) != "compact_bottom") {
-            return
+        val controls = binding.playerView.findViewById<View>(R.id.player_controls)
+        val opacity = appPreferences.getValue(appPreferences.playerControlsOpacity)
+        val compact =
+            appPreferences.getValue(appPreferences.playerControlsLayout) == "compact_bottom"
+        val scrim = binding.playerView.findViewById<View>(R.id.compact_bottom_scrim)
+
+        if (opacity != "default") {
+            val alpha = (opacity.toIntOrNull() ?: 100).coerceIn(0, 100) / 100f
+            if (compact) {
+                scrim.alpha = alpha
+            } else {
+                controls.setBackgroundColor(Color.argb((alpha * 255).toInt(), 0, 0, 0))
+            }
         }
 
-        binding.playerView
-            .findViewById<View>(R.id.player_controls)
-            .setBackgroundColor(Color.TRANSPARENT)
-        binding.playerView.findViewById<View>(R.id.compact_bottom_scrim).isVisible = true
+        if (compact) {
+            controls.setBackgroundColor(Color.TRANSPARENT)
+            scrim.isVisible = true
 
+            val transportControls =
+                binding.playerView.findViewById<LinearLayout>(R.id.transport_controls)
+            val layoutParams = transportControls.layoutParams as FrameLayout.LayoutParams
+            layoutParams.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            layoutParams.bottomMargin =
+                resources.getDimensionPixelSize(R.dimen.player_controls_compact_bottom_margin)
+            transportControls.layoutParams = layoutParams
+
+            val compactButtonGap =
+                resources.getDimensionPixelSize(R.dimen.player_controls_compact_button_gap)
+            for (index in 0 until transportControls.childCount) {
+                val button = transportControls.getChildAt(index) as? ImageButton ?: continue
+                val buttonParams = button.layoutParams as LinearLayout.LayoutParams
+                if (buttonParams.marginStart > 0) buttonParams.marginStart = compactButtonGap
+                if (buttonParams.marginEnd > 0) buttonParams.marginEnd = compactButtonGap
+                button.layoutParams = buttonParams
+            }
+
+            binding.playerView.findViewById<ImageButton>(R.id.exo_play_pause).apply {
+                setBackgroundResource(CoreR.drawable.transparent_circle_background)
+                imageTintList = ColorStateList.valueOf(Color.WHITE)
+            }
+        }
+
+        val requestedSize = appPreferences.getValue(appPreferences.playerControlsSize)
+        val narrowPortrait = resources.configuration.screenWidthDp <= 380
+        val sizePaddingDp =
+            when {
+                resources.configuration.screenWidthDp <= 336 && requestedSize == "large" -> 16
+                requestedSize == "small" -> 12
+                requestedSize == "large" -> 20
+                else -> 16
+            }
+        val padding = (sizePaddingDp * resources.displayMetrics.density).toInt()
+        val minTarget = resources.getDimensionPixelSize(R.dimen.player_controls_min_touch_target)
+        val iconScale =
+            when (requestedSize) {
+                "small" -> 0.8f
+                "large" -> 1.25f
+                else -> 1f
+            }
         val transportControls =
             binding.playerView.findViewById<LinearLayout>(R.id.transport_controls)
-        val layoutParams = transportControls.layoutParams as FrameLayout.LayoutParams
-        layoutParams.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-        layoutParams.bottomMargin =
-            resources.getDimensionPixelSize(R.dimen.player_controls_compact_bottom_margin)
-        transportControls.layoutParams = layoutParams
-
-        val minimumTouchTarget =
-            resources.getDimensionPixelSize(R.dimen.player_controls_min_touch_target)
-        val compactButtonGap =
-            resources.getDimensionPixelSize(R.dimen.player_controls_compact_button_gap)
         for (index in 0 until transportControls.childCount) {
             val button = transportControls.getChildAt(index) as? ImageButton ?: continue
-            button.minimumWidth = minimumTouchTarget
-            button.minimumHeight = minimumTouchTarget
+            button.setPadding(padding, padding, padding, padding)
+            button.minimumWidth = minTarget
+            button.minimumHeight = minTarget
+            button.scaleType = ImageView.ScaleType.MATRIX
+            button.addOnLayoutChangeListener(
+                object : View.OnLayoutChangeListener {
+                    override fun onLayoutChange(
+                        view: View,
+                        left: Int,
+                        top: Int,
+                        right: Int,
+                        bottom: Int,
+                        oldLeft: Int,
+                        oldTop: Int,
+                        oldRight: Int,
+                        oldBottom: Int,
+                    ) {
+                        val icon = button.drawable ?: return
+                        val contentWidth = button.width - button.paddingLeft - button.paddingRight
+                        val contentHeight = button.height - button.paddingTop - button.paddingBottom
+                        val matrix =
+                            Matrix().apply {
+                                setScale(iconScale, iconScale)
+                                postTranslate(
+                                    (contentWidth - icon.intrinsicWidth * iconScale) / 2f,
+                                    (contentHeight - icon.intrinsicHeight * iconScale) / 2f,
+                                )
+                            }
+                        button.imageMatrix = matrix
+                        button.removeOnLayoutChangeListener(this)
+                    }
+                }
+            )
             val buttonParams = button.layoutParams as LinearLayout.LayoutParams
-            if (buttonParams.marginStart > 0) buttonParams.marginStart = compactButtonGap
-            if (buttonParams.marginEnd > 0) buttonParams.marginEnd = compactButtonGap
+            val targetGapDp =
+                when {
+                    requestedSize == "small" -> 12
+                    requestedSize == "large" -> 36
+                    else -> 32
+                }
+            val buttonWidthDp = maxOf(48, 24 + sizePaddingDp * 2)
+            val availableGapDp =
+                ((resources.configuration.screenWidthDp - buttonWidthDp * 5) / 4).coerceAtLeast(4)
+            val gapDp = if (compact || narrowPortrait) 4 else minOf(targetGapDp, availableGapDp)
+            val gap = (gapDp * resources.displayMetrics.density).toInt()
+            if (buttonParams.marginStart > 0) buttonParams.marginStart = gap
+            if (buttonParams.marginEnd > 0) buttonParams.marginEnd = gap
             button.layoutParams = buttonParams
-        }
-
-        binding.playerView.findViewById<ImageButton>(R.id.exo_play_pause).apply {
-            setBackgroundResource(CoreR.drawable.transparent_circle_background)
-            imageTintList = ColorStateList.valueOf(Color.WHITE)
         }
     }
 
