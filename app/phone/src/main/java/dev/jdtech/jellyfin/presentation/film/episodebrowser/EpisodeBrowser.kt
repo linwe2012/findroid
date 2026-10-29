@@ -1,5 +1,13 @@
 package dev.jdtech.jellyfin.presentation.film.episodebrowser
 
+import android.animation.ValueAnimator
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -38,12 +46,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -307,19 +320,28 @@ fun EpisodeBrowser(
                     episode.indexNumberEnd
                         ?.takeIf { it > episode.indexNumber }
                         ?.let { "${episode.indexNumber}–$it" } ?: episode.indexNumber.toString()
-                val markers = buildString {
-                    if (current) append("▶ ${stringResource(CoreR.string.now_playing)} · ")
-                    else if (continueTarget) {
-                        val label =
-                            if (episode.playbackPositionTicks > 0) CoreR.string.resume
-                            else CoreR.string.next_up
-                        append("● ${stringResource(label)} · ")
+                val status =
+                    when {
+                        current -> EpisodeStatus.Current
+                        continueTarget && episode.playbackPositionTicks > 0 -> EpisodeStatus.Resume
+                        continueTarget -> EpisodeStatus.NextUp
+                        else -> null
                     }
-                }
+                val statusLabel = status?.let { stringResource(it.labelResource) }
+                val title = "$number. ${episode.name}"
+                val titleColor =
+                    when {
+                        current -> MaterialTheme.colorScheme.primary
+                        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier =
                         Modifier.fillMaxWidth()
+                            .semantics(mergeDescendants = true) {
+                                statusLabel?.let { stateDescription = it }
+                            }
                             .clickable(enabled = enabled) { onSelect(episode) }
                             .padding(vertical = 12.dp, horizontal = 8.dp),
                 ) {
@@ -332,23 +354,114 @@ fun EpisodeBrowser(
                         Spacer(Modifier.width(12.dp))
                     }
                     Column {
-                        Text(
-                            text = "$markers$number. ${episode.name}",
-                            color =
-                                when {
-                                    current -> MaterialTheme.colorScheme.primary
-                                    !enabled ->
-                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                                    else -> MaterialTheme.colorScheme.onSurface
-                                },
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            status?.let {
+                                EpisodeStatusIndicator(it)
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Text(
+                                text = title,
+                                color = titleColor,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         if (showEpisodeDetails && episode.overview.isNotBlank()) {
                             OverviewText(text = episode.overview, maxCollapsedLines = 3)
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+private enum class EpisodeStatus(val labelResource: Int) {
+    Current(CoreR.string.now_playing),
+    NextUp(CoreR.string.next_up),
+    Resume(CoreR.string.resume),
+}
+
+@Composable
+private fun EpisodeStatusIndicator(status: EpisodeStatus) {
+    val color =
+        if (status == EpisodeStatus.Current) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurfaceVariant
+    val animateDots =
+        status == EpisodeStatus.Current && remember { ValueAnimator.areAnimatorsEnabled() }
+    val waveOffsets =
+        if (animateDots) {
+            val transition = rememberInfiniteTransition(label = "current-episode-dots")
+            List(3) { index ->
+                val offset by
+                    transition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = -3f,
+                        animationSpec =
+                            infiniteRepeatable(
+                                animation =
+                                    tween(
+                                        durationMillis = 320,
+                                        delayMillis = index * 110,
+                                        easing = FastOutSlowInEasing,
+                                    ),
+                                repeatMode = RepeatMode.Reverse,
+                            ),
+                        label = "current-episode-dot-$index",
+                    )
+                offset
+            }
+        } else {
+            listOf(0f, 0f, 0f)
+        }
+
+    Canvas(Modifier.width(28.dp).heightIn(min = 16.dp)) {
+        val radius = 2.dp.toPx()
+        val centerY = size.height / 2f
+        val dotX = floatArrayOf(3.dp.toPx(), 9.dp.toPx(), 15.dp.toPx())
+        dotX.forEachIndexed { index, x ->
+            drawCircle(
+                color = color,
+                radius = radius,
+                center = Offset(x, centerY + waveOffsets[index].dp.toPx()),
+            )
+        }
+        when (status) {
+            EpisodeStatus.Current -> Unit
+            EpisodeStatus.NextUp -> {
+                val stroke = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round)
+                drawLine(
+                    color,
+                    Offset(20.dp.toPx(), centerY),
+                    Offset(25.dp.toPx(), centerY),
+                    stroke.width,
+                    cap = stroke.cap,
+                )
+                drawLine(
+                    color,
+                    Offset(22.dp.toPx(), centerY - 3.dp.toPx()),
+                    Offset(25.dp.toPx(), centerY),
+                    stroke.width,
+                    cap = stroke.cap,
+                )
+                drawLine(
+                    color,
+                    Offset(22.dp.toPx(), centerY + 3.dp.toPx()),
+                    Offset(25.dp.toPx(), centerY),
+                    stroke.width,
+                    cap = stroke.cap,
+                )
+            }
+            EpisodeStatus.Resume -> {
+                val left = 21.dp.toPx()
+                val playMark =
+                    Path().apply {
+                        moveTo(left, centerY - 3.dp.toPx())
+                        lineTo(left + 5.dp.toPx(), centerY)
+                        lineTo(left, centerY + 3.dp.toPx())
+                        close()
+                    }
+                drawPath(playMark, color)
             }
         }
     }
