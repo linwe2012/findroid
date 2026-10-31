@@ -247,7 +247,10 @@ constructor(
             )
         }
         player.pause()
-        player.clearMediaItems()
+        // MPVPlayer supports replacing the playlist but does not implement removeMediaItems(),
+        // which Media3's clearMediaItems() delegates to. Replacing with an empty playlist resets
+        // both ExoPlayer and MPVPlayer without relying on that unsupported mutation API.
+        player.setMediaItems(mutableListOf(), 0, C.TIME_UNSET)
 
         initializationJob = viewModelScope.launch {
             val preparedPlaylist =
