@@ -101,4 +101,36 @@ class PlayerSessionGuardTest {
 
         assertEquals(PlaybackEndDecision.ADVANCE, decision.await())
     }
+
+    @Test
+    fun queuedEndCallbacksAreIgnoredAfterThePlayerHasAdvanced() {
+        assertTrue(
+            isAuthoritativeEndOfItemPause(
+                callbackPlayWhenReady = false,
+                callbackReasonIsEndOfItem = true,
+                currentPlayWhenReady = false,
+                currentPlaybackStateIsReady = true,
+            )
+        )
+        assertFalse(
+            isAuthoritativeEndOfItemPause(
+                callbackPlayWhenReady = false,
+                callbackReasonIsEndOfItem = true,
+                currentPlayWhenReady = true,
+                currentPlaybackStateIsReady = true,
+            )
+        )
+        assertFalse(
+            isAuthoritativePlaybackEnded(
+                reportedStateIsEnded = true,
+                currentStateIsEnded = false,
+            )
+        )
+        assertTrue(
+            isAuthoritativePlaybackEnded(
+                reportedStateIsEnded = true,
+                currentStateIsEnded = true,
+            )
+        )
+    }
 }

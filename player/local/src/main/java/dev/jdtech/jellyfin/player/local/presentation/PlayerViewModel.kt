@@ -31,6 +31,8 @@ import dev.jdtech.jellyfin.player.local.domain.PlaylistManager
 import dev.jdtech.jellyfin.player.local.domain.awaitNeighborPreloadAndDecide
 import dev.jdtech.jellyfin.player.local.domain.decidePlaybackEnd
 import dev.jdtech.jellyfin.player.local.domain.insertNeighborsAroundCurrent
+import dev.jdtech.jellyfin.player.local.domain.isAuthoritativeEndOfItemPause
+import dev.jdtech.jellyfin.player.local.domain.isAuthoritativePlaybackEnded
 import dev.jdtech.jellyfin.player.local.mpv.MPVPlayer
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -565,9 +567,13 @@ constructor(
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
         if (
-            !playWhenReady &&
-                reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM &&
-                player.playbackState == ExoPlayer.STATE_READY
+            isAuthoritativeEndOfItemPause(
+                callbackPlayWhenReady = playWhenReady,
+                callbackReasonIsEndOfItem =
+                    reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM,
+                currentPlayWhenReady = player.playWhenReady,
+                currentPlaybackStateIsReady = player.playbackState == ExoPlayer.STATE_READY,
+            )
         ) {
             handleMediaItemEnd()
         }
@@ -592,7 +598,14 @@ constructor(
             }
             ExoPlayer.STATE_ENDED -> {
                 stateString = "ExoPlayer.STATE_ENDED     -"
-                handleMediaItemEnd()
+                if (
+                    isAuthoritativePlaybackEnded(
+                        reportedStateIsEnded = state == ExoPlayer.STATE_ENDED,
+                        currentStateIsEnded = player.playbackState == ExoPlayer.STATE_ENDED,
+                    )
+                ) {
+                    handleMediaItemEnd()
+                }
             }
         }
         Timber.d("Changed player state to $stateString")

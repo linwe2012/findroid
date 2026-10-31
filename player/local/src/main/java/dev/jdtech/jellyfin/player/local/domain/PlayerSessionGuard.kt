@@ -39,6 +39,22 @@ internal suspend fun awaitNeighborPreloadAndDecide(
     return decide()
 }
 
+internal fun isAuthoritativeEndOfItemPause(
+    callbackPlayWhenReady: Boolean,
+    callbackReasonIsEndOfItem: Boolean,
+    currentPlayWhenReady: Boolean,
+    currentPlaybackStateIsReady: Boolean,
+): Boolean =
+    !callbackPlayWhenReady &&
+        callbackReasonIsEndOfItem &&
+        !currentPlayWhenReady &&
+        currentPlaybackStateIsReady
+
+internal fun isAuthoritativePlaybackEnded(
+    reportedStateIsEnded: Boolean,
+    currentStateIsEnded: Boolean,
+): Boolean = reportedStateIsEnded && currentStateIsEnded
+
 internal class PlaybackEndTracker {
     private val handledOccurrences = mutableSetOf<Pair<Int, Int>>()
 
