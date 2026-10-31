@@ -15,12 +15,20 @@ import dev.jdtech.jellyfin.player.core.domain.models.TrickplayInfo
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.MediaStreamType
 import timber.log.Timber
 
 class PlaylistManager @Inject internal constructor(private val repository: JellyfinRepository) {
+    data class PreparedPlaylist(
+        val startItem: FindroidItem,
+        val episodes: List<FindroidItem>,
+        val playerItem: PlayerItem,
+        val index: Int,
+    )
+
     data class PreparedEpisode(
         val episode: FindroidEpisode,
         val episodes: List<FindroidItem>,
@@ -31,23 +39,31 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
     private var startItem: FindroidItem? = null
     private var items: List<FindroidItem> = emptyList()
     private val playerItems: MutableList<PlayerItem> = mutableListOf()
+    private val playlistGeneration = PlaylistGenerationGuard()
     var currentItemIndex: Int = 0
 
-    suspend fun getInitialItem(
+    fun reset() {
+        playlistGeneration.advance()
+        startItem = null
+        items = emptyList()
+        playerItems.clear()
+        currentItemIndex = 0
+    }
+
+    suspend fun prepareInitialPlaylist(
         itemId: UUID,
         itemKind: BaseItemKind,
         mediaSourceIndex: Int? = null,
         startFromBeginning: Boolean = false,
-    ): PlayerItem? {
+    ): PreparedPlaylist? {
         Timber.d("Retrieving initial player item")
 
-        val initialItem =
+        val (initialItem, episodeItems) =
             when (itemKind) {
                 BaseItemKind.MOVIE -> {
                     val movie = repository.getMovie(itemId)
 
-                    items = listOf(movie)
-                    movie
+                    movie to listOf(movie)
                 }
                 BaseItemKind.SERIES -> {
                     val nextUpEpisode = repository.getNextUp(itemId).firstOrNull()
@@ -78,8 +94,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
 
                     val episode = nextUpEpisode ?: episodes.first()
 
-                    items = episodes
-                    episode
+                    episode to episodes
                 }
                 BaseItemKind.SEASON -> {
                     val season = repository.getSeason(itemId)
@@ -98,8 +113,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
 
                     val episode = episodes.first()
 
-                    items = episodes
-                    episode
+                    episode to episodes
                 }
                 BaseItemKind.EPISODE -> {
                     val episode = repository.getEpisode(itemId)
@@ -113,26 +127,26 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
                             )
                             .filter { !it.missing }
 
-                    items = episodes
-                    episode
+                    episode to episodes
                 }
                 else -> null
-            }
+            } ?: return null
 
-        if (initialItem == null) {
-            return null
-        }
-
-        startItem = initialItem
-
-        currentItemIndex = items.indexOfFirst { it.id == initialItem.id }
+        val index = episodeItems.indexOfFirst { it.id == initialItem.id }
 
         val playbackPosition =
             if (!startFromBeginning) initialItem.playbackPositionTicks.div(10000) else 0
         val playerItem = initialItem.toPlayerItem(mediaSourceIndex, playbackPosition)
-        playerItems.add(playerItem)
+        return PreparedPlaylist(initialItem, episodeItems, playerItem, index)
+    }
 
-        return playerItem
+    fun commitInitialPlaylist(prepared: PreparedPlaylist) {
+        playlistGeneration.advance()
+        startItem = prepared.startItem
+        items = prepared.episodes
+        currentItemIndex = prepared.index
+        playerItems.clear()
+        playerItems.add(prepared.playerItem)
     }
 
     suspend fun prepareEpisode(itemId: UUID): PreparedEpisode? {
@@ -154,6 +168,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
     }
 
     fun commitEpisode(prepared: PreparedEpisode) {
+        playlistGeneration.advance()
         startItem = prepared.episode
         items = prepared.episodes
         currentItemIndex = prepared.index
@@ -164,6 +179,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
     suspend fun getPreviousPlayerItem(): PlayerItem? {
         Timber.d("Retrieving previous player item")
 
+        val generation = playlistGeneration.current()
         val itemIndex = currentItemIndex - 1
         val playerItem =
             when (startItem) {
@@ -176,6 +192,8 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
                         if (playerItems.firstOrNull { it.itemId == item.id } == null) {
                             try {
                                 item.toPlayerItem(null, 0L)
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (e: Exception) {
                                 Timber.e("Failed to retrieve previous player item: $e")
                                 null
@@ -189,6 +207,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
             }
 
         if (playerItem != null) {
+            if (!playlistGeneration.isCurrent(generation)) return null
             playerItems.add(playerItem)
         }
 
@@ -198,6 +217,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
     suspend fun getNextPlayerItem(): PlayerItem? {
         Timber.d("Retrieving next player item")
 
+        val generation = playlistGeneration.current()
         val itemIndex = currentItemIndex + 1
         val playerItem =
             when (startItem) {
@@ -210,6 +230,8 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
                         if (playerItems.firstOrNull { it.itemId == item.id } == null) {
                             try {
                                 item.toPlayerItem(null, 0L)
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (e: Exception) {
                                 Timber.e("Failed to retrieve next player item: $e")
                                 null
@@ -223,6 +245,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
             }
 
         if (playerItem != null) {
+            if (!playlistGeneration.isCurrent(generation)) return null
             playerItems.add(playerItem)
         }
 

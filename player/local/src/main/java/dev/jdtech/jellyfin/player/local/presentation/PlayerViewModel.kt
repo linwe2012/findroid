@@ -24,7 +24,13 @@ import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.core.domain.models.Trickplay
 import dev.jdtech.jellyfin.player.local.R
+import dev.jdtech.jellyfin.player.local.domain.PlaybackEndDecision
+import dev.jdtech.jellyfin.player.local.domain.PlaybackEndTracker
+import dev.jdtech.jellyfin.player.local.domain.PlayerSessionGuard
 import dev.jdtech.jellyfin.player.local.domain.PlaylistManager
+import dev.jdtech.jellyfin.player.local.domain.awaitNeighborPreloadAndDecide
+import dev.jdtech.jellyfin.player.local.domain.decidePlaybackEnd
+import dev.jdtech.jellyfin.player.local.domain.insertNeighborsAroundCurrent
 import dev.jdtech.jellyfin.player.local.mpv.MPVPlayer
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -95,9 +101,19 @@ constructor(
     private var playbackPosition: Long = savedStateHandle["position"] ?: 0
     private var currentMediaItemSegments: List<FindroidSegment> = emptyList()
     private var transitionJob: Job? = null
+    private var neighborPreloadJob: Job? = null
+    private var previousPreloadJob: Job? = null
     private var episodeSelectionJob: Job? = null
+    private var initializationJob: Job? = null
+    private var terminalEndJob: Job? = null
     private var episodeSelectionGeneration = 0
     private var transitionGeneration = 0
+    private val playerSessionGuard = PlayerSessionGuard()
+    private val playbackEndTracker = PlaybackEndTracker()
+    private var activePlayerSession = 0
+    private var playerListenerRegistered = false
+    private var episodeSelectionPending = false
+    private var pendingEpisodeSelectionId: String? = null
 
     // Segments preferences
     var segmentsSkipButton: Boolean = false
@@ -193,30 +209,84 @@ constructor(
     }
 
     fun initializePlayer(itemId: UUID, itemKind: String, startFromBeginning: Boolean) {
-        player.addListener(this)
+        val session = playerSessionGuard.begin()
+        activePlayerSession = session
+        transitionGeneration++
+        episodeSelectionGeneration++
+        initializationJob?.cancel()
+        transitionJob?.cancel()
+        neighborPreloadJob?.cancel()
+        previousPreloadJob?.cancel()
+        episodeSelectionJob?.cancel()
+        terminalEndJob?.cancel()
+        playbackEndTracker.reset()
+        episodeSelectionPending = false
+        pendingEpisodeSelectionId = null
 
-        viewModelScope.launch {
-            val startItem =
+        if (!playerListenerRegistered) {
+            player.addListener(this)
+            playerListenerRegistered = true
+        }
+
+        playlistManager.reset()
+        items.clear()
+        currentMediaItemIndex = 0
+        playbackPosition = 0L
+        savedStateHandle["mediaItemIndex"] = 0
+        savedStateHandle["position"] = 0L
+        _uiState.update {
+            it.copy(
+                currentItemTitle = "",
+                currentItemId = null,
+                currentSegment = null,
+                currentTrickplay = null,
+                currentChapters = emptyList(),
+                fileLoaded = false,
+            )
+        }
+        player.pause()
+        player.clearMediaItems()
+
+        initializationJob = viewModelScope.launch {
+            val preparedPlaylist =
                 try {
-                    playlistManager.getInitialItem(
+                    playlistManager.prepareInitialPlaylist(
                         itemId = itemId,
                         itemKind = BaseItemKind.fromName(itemKind),
                         mediaSourceIndex = null,
                         startFromBeginning = startFromBeginning,
                     )
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Timber.e(e)
                     Toast.makeText(application, e.localizedMessage, Toast.LENGTH_LONG).show()
                     null
                 }
 
-            if (startItem == null) {
+            if (!playerSessionGuard.isCurrent(session) || preparedPlaylist == null) {
                 Timber.e("No start item, stopping player initialization")
                 return@launch
             }
 
+            playlistManager.commitInitialPlaylist(preparedPlaylist)
+            val startItem = preparedPlaylist.playerItem
             items = listOfNotNull(startItem).toMutableList()
             currentMediaItemIndex = items.indexOf(startItem)
+
+            // Commit the first successor before MPV can report EOF for a short first episode.
+            // Failure to load that successor is non-fatal; the current item still starts.
+            val nextItem =
+                try {
+                    playlistManager.getNextPlayerItem()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.e(e)
+                    null
+                }
+            if (!playerSessionGuard.isCurrent(session)) return@launch
+            if (nextItem != null) items.add(nextItem)
 
             val mediaItems = mutableListOf<MediaItem>()
             try {
@@ -234,6 +304,7 @@ constructor(
                     playbackPosition
                 }
 
+            if (!playerSessionGuard.isCurrent(session)) return@launch
             player.setMediaItems(mediaItems, 0, startPosition)
             player.setPlaybackSpeed(defaultPlaybackSpeed)
             playbackSpeed = defaultPlaybackSpeed
@@ -365,75 +436,125 @@ constructor(
         Timber.d("Playing MediaItem: ${mediaItem?.mediaId}")
         savedStateHandle["mediaItemIndex"] = player.currentMediaItemIndex
         transitionJob?.cancel()
+        neighborPreloadJob?.cancel()
+        previousPreloadJob?.cancel()
         val generation = ++transitionGeneration
         val transitionedId = mediaItem?.mediaId ?: return
+        val session = activePlayerSession
+        if (
+            !playerSessionGuard.isCurrentTransition(
+                session,
+                transitionedId,
+                player.currentMediaItem?.mediaId,
+            )
+        )
+            return
+        val item = items.firstOrNull { it.itemId.toString() == transitionedId } ?: return
+        val itemTitle =
+            if (item.parentIndexNumber != null && item.indexNumber != null) {
+                if (item.indexNumberEnd == null) {
+                    "S${item.parentIndexNumber}:E${item.indexNumber} - ${item.name}"
+                } else {
+                    "S${item.parentIndexNumber}:E${item.indexNumberEnd} - ${item.name}"
+                }
+            } else {
+                item.name
+            }
+        _uiState.update {
+            it.copy(
+                currentItemTitle = itemTitle,
+                currentItemId = item.itemId,
+                currentSegment = null,
+                currentTrickplay = null,
+                currentChapters = item.chapters,
+                fileLoaded = false,
+            )
+        }
+        currentMediaItemSegments = emptyList()
+        if (pendingEpisodeSelectionId == transitionedId) {
+            episodeSelectionPending = false
+            pendingEpisodeSelectionId = null
+        }
+        playlistManager.setCurrentMediaItemIndex(item.itemId)
+
+        neighborPreloadJob = viewModelScope.launch {
+            try {
+                val nextItem = playlistManager.getNextPlayerItem()
+                if (!isCurrentTransition(session, transitionedId, generation)) return@launch
+
+                val currentQueueIndex = items.indexOfFirst {
+                    it.itemId.toString() == transitionedId
+                }
+                items
+                    .insertNeighborsAroundCurrent(
+                        currentIndex = currentQueueIndex,
+                        previous = null,
+                        next = nextItem,
+                        keyOf = PlayerItem::itemId,
+                    )
+                    .forEach { insertion ->
+                        player.addMediaItem(insertion.index, insertion.item.toMediaItem())
+                    }
+
+                Timber.tag("PlayerItems").d(items.map { it.indexNumber }.toString())
+
+                previousPreloadJob = viewModelScope.launch {
+                    try {
+                        val previousItem = playlistManager.getPreviousPlayerItem()
+                        if (!isCurrentTransition(session, transitionedId, generation)) return@launch
+
+                        val currentIndexAfterNext = items.indexOfFirst {
+                            it.itemId.toString() == transitionedId
+                        }
+                        items
+                            .insertNeighborsAroundCurrent(
+                                currentIndex = currentIndexAfterNext,
+                                previous = previousItem,
+                                next = null,
+                                keyOf = PlayerItem::itemId,
+                            )
+                            .forEach { insertion ->
+                                player.addMediaItem(
+                                    insertion.index,
+                                    insertion.item.toMediaItem(),
+                                )
+                            }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.e(e)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(e)
+            }
+        }
+
+        viewModelScope.launch {
+            try {
+                repository.postPlaybackStart(item.itemId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(e)
+            }
+        }
+
         transitionJob = viewModelScope.launch {
             try {
-                items
-                    .first { it.itemId.toString() == transitionedId }
-                    .let { item ->
-                        val itemTitle =
-                            if (item.parentIndexNumber != null && item.indexNumber != null) {
-                                if (item.indexNumberEnd == null) {
-                                    "S${item.parentIndexNumber}:E${item.indexNumber} - ${item.name}"
-                                } else {
-                                    "S${item.parentIndexNumber}:E${item.indexNumber}-${item.indexNumberEnd} - ${item.name}"
-                                }
-                            } else {
-                                item.name
-                            }
-                        _uiState.update {
-                            it.copy(
-                                currentItemTitle = itemTitle,
-                                currentItemId = item.itemId,
-                                currentSegment = null,
-                                currentTrickplay = null,
-                                currentChapters = item.chapters,
-                                fileLoaded = false,
-                            )
-                        }
-                        currentMediaItemSegments = emptyList()
+                if (segmentsSkipButton || segmentsAutoSkip) {
+                    val segments = getSegments(item.itemId)
+                    if (!isCurrentTransition(session, transitionedId, generation)) return@launch
+                    currentMediaItemSegments = segments
+                }
 
-                        repository.postPlaybackStart(item.itemId)
-                        if (!isCurrentTransition(transitionedId, generation)) return@let
-
-                        if (segmentsSkipButton || segmentsAutoSkip) {
-                            val segments = getSegments(item.itemId)
-                            if (!isCurrentTransition(transitionedId, generation)) return@let
-                            currentMediaItemSegments = segments
-                        }
-
-                        if (appPreferences.getValue(appPreferences.playerTrickplay)) {
-                            val trickplay = getTrickplay(item)
-                            if (!isCurrentTransition(transitionedId, generation)) return@let
-                            _uiState.update { it.copy(currentTrickplay = trickplay) }
-                        }
-                        if (!isCurrentTransition(transitionedId, generation)) return@let
-
-                        playlistManager.setCurrentMediaItemIndex(item.itemId)
-
-                        val previousItem = playlistManager.getPreviousPlayerItem()
-                        if (!isCurrentTransition(transitionedId, generation)) return@let
-                        if (previousItem != null) {
-                            items.add(player.currentMediaItemIndex, previousItem)
-                            player.addMediaItem(
-                                player.currentMediaItemIndex,
-                                previousItem.toMediaItem(),
-                            )
-                        }
-
-                        val nextItem = playlistManager.getNextPlayerItem()
-                        if (!isCurrentTransition(transitionedId, generation)) return@let
-                        if (nextItem != null) {
-                            items.add(player.currentMediaItemIndex + 1, nextItem)
-                            player.addMediaItem(
-                                player.currentMediaItemIndex + 1,
-                                nextItem.toMediaItem(),
-                            )
-                        }
-
-                        Timber.tag("PlayerItems").d(items.map { it.indexNumber }.toString())
-                    }
+                if (appPreferences.getValue(appPreferences.playerTrickplay)) {
+                    val trickplay = getTrickplay(item)
+                    if (!isCurrentTransition(session, transitionedId, generation)) return@launch
+                    _uiState.update { it.copy(currentTrickplay = trickplay) }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -443,28 +564,12 @@ constructor(
     }
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-        // Report playback stopped for current item and transition to the next one
         if (
             !playWhenReady &&
                 reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM &&
                 player.playbackState == ExoPlayer.STATE_READY
         ) {
-            viewModelScope.launch {
-                val mediaId = player.currentMediaItem?.mediaId
-                val position = player.currentPosition
-                val duration = player.duration
-                try {
-                    repository.postPlaybackStop(
-                        UUID.fromString(mediaId),
-                        position.times(10000),
-                        position.div(duration.toFloat()).times(100).toInt(),
-                    )
-                } catch (e: Exception) {
-                    Timber.e(e)
-                }
-                player.seekToNextMediaItem()
-                player.play()
-            }
+            handleMediaItemEnd()
         }
     }
 
@@ -480,13 +585,76 @@ constructor(
             ExoPlayer.STATE_READY -> {
                 stateString = "ExoPlayer.STATE_READY     -"
                 _uiState.update { it.copy(fileLoaded = true) }
+                if (pendingEpisodeSelectionId == player.currentMediaItem?.mediaId) {
+                    episodeSelectionPending = false
+                    pendingEpisodeSelectionId = null
+                }
             }
             ExoPlayer.STATE_ENDED -> {
                 stateString = "ExoPlayer.STATE_ENDED     -"
-                eventsChannel.trySend(PlayerEvents.NavigateBack)
+                handleMediaItemEnd()
             }
         }
         Timber.d("Changed player state to $stateString")
+    }
+
+    private fun handleMediaItemEnd() {
+        if (episodeSelectionPending) return
+        val mediaId = player.currentMediaItem?.mediaId ?: return
+        val session = activePlayerSession
+        if (
+            !playerSessionGuard.isCurrentTransition(
+                session,
+                mediaId,
+                player.currentMediaItem?.mediaId,
+            )
+        )
+            return
+        val occurrence = transitionGeneration
+        if (!playbackEndTracker.markHandled(session, occurrence)) return
+
+        val position = player.currentPosition
+        val duration = player.duration
+        val pendingNeighborPreload = neighborPreloadJob
+        terminalEndJob = viewModelScope.launch {
+            val decision =
+                awaitNeighborPreloadAndDecide(pendingNeighborPreload) {
+                    decidePlaybackEnd(
+                        isCurrentSession = playerSessionGuard.isCurrent(session),
+                        isCurrentItem =
+                            !episodeSelectionPending &&
+                                transitionGeneration == occurrence &&
+                                player.currentMediaItem?.mediaId == mediaId,
+                        hasNextItem = player.hasNextMediaItem(),
+                    )
+                }
+            when (decision) {
+                PlaybackEndDecision.ADVANCE -> {
+                    player.seekToNextMediaItem()
+                    player.play()
+                }
+                PlaybackEndDecision.FINISH -> eventsChannel.trySend(PlayerEvents.NavigateBack)
+                PlaybackEndDecision.IGNORE -> return@launch
+            }
+            reportPlaybackStop(mediaId, position, duration)
+        }
+    }
+
+    private fun reportPlaybackStop(mediaId: String, position: Long, duration: Long) {
+        val percentPlayed = if (duration > 0L) (position.toDouble() / duration * 100).toInt() else 0
+        viewModelScope.launch {
+            try {
+                repository.postPlaybackStop(
+                    UUID.fromString(mediaId),
+                    position * 10000,
+                    percentPlayed,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(e)
+            }
+        }
     }
 
     override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
@@ -535,11 +703,23 @@ constructor(
             // A pending different selection must not win after the user chooses the current item.
             episodeSelectionGeneration++
             episodeSelectionJob?.cancel()
+            episodeSelectionPending = false
+            pendingEpisodeSelectionId = null
+            terminalEndJob?.cancel()
+            transitionGeneration++
+            if (player.playbackState == ExoPlayer.STATE_ENDED) handleMediaItemEnd()
             onComplete(true)
             return
         }
         val generation = ++episodeSelectionGeneration
         episodeSelectionJob?.cancel()
+        episodeSelectionPending = true
+        pendingEpisodeSelectionId = itemId.toString()
+        transitionGeneration++
+        terminalEndJob?.cancel()
+        neighborPreloadJob?.cancel()
+        previousPreloadJob?.cancel()
+        transitionJob?.cancel()
         episodeSelectionJob = viewModelScope.launch {
             val prepared =
                 try {
@@ -550,38 +730,30 @@ constructor(
                     Timber.e(e)
                     null
                 }
-                    ?: run {
-                        onComplete(false)
-                        return@launch
-                    }
             if (generation != episodeSelectionGeneration) return@launch
+            if (prepared == null) {
+                episodeSelectionPending = false
+                pendingEpisodeSelectionId = null
+                if (player.playbackState == ExoPlayer.STATE_ENDED) handleMediaItemEnd()
+                onComplete(false)
+                return@launch
+            }
             val mediaItem =
                 try {
                     prepared.playerItem.toMediaItem()
                 } catch (e: Exception) {
                     Timber.e(e)
+                    episodeSelectionPending = false
+                    pendingEpisodeSelectionId = null
+                    if (player.playbackState == ExoPlayer.STATE_ENDED) handleMediaItemEnd()
                     onComplete(false)
                     return@launch
                 }
-            // Let the current item finish its transition setup against the old playlist.
-            transitionJob?.join()
             if (generation != episodeSelectionGeneration) return@launch
             transitionGeneration++
             val previousId = player.currentMediaItem?.mediaId
             if (previousId != null) {
-                try {
-                    repository.postPlaybackStop(
-                        UUID.fromString(previousId),
-                        player.currentPosition * 10000,
-                        if (player.duration > 0)
-                            (player.currentPosition * 100 / player.duration).toInt()
-                        else 0,
-                    )
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Timber.e(e)
-                }
+                reportPlaybackStop(previousId, player.currentPosition, player.duration)
             }
             if (generation != episodeSelectionGeneration) return@launch
             val resumePlayback = player.playWhenReady
@@ -608,8 +780,17 @@ constructor(
         }
     }
 
-    private fun isCurrentTransition(mediaId: String, generation: Int): Boolean =
-        transitionGeneration == generation && player.currentMediaItem?.mediaId == mediaId
+    private fun isCurrentTransition(
+        session: Int,
+        mediaId: String,
+        generation: Int,
+    ): Boolean =
+        transitionGeneration == generation &&
+            playerSessionGuard.isCurrentTransition(
+                session,
+                mediaId,
+                player.currentMediaItem?.mediaId,
+            )
 
     private suspend fun getSegments(itemId: UUID): List<FindroidSegment> {
         return try {

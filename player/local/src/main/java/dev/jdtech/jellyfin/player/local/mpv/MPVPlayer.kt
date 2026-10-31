@@ -34,6 +34,7 @@ import androidx.media3.common.util.Clock
 import androidx.media3.common.util.ListenerSet
 import androidx.media3.common.util.Size
 import androidx.media3.common.util.Util
+import dev.jdtech.jellyfin.player.local.domain.canSeekToNextMediaItem
 import dev.jdtech.mpv.MPVLib
 import dev.jdtech.mpv.MPVLib.MpvEvent
 import dev.jdtech.mpv.MPVLib.MpvFormat
@@ -300,6 +301,7 @@ class MPVPlayer(
 
     // Internal state.
     private var internalMediaItems = mutableListOf<MediaItem>()
+    private var lastAvailableCommands: Commands? = null
 
     @Player.State private var playbackState: Int = STATE_IDLE
     private var currentPlayWhenReady: Boolean = false
@@ -403,12 +405,14 @@ class MPVPlayer(
                             TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED,
                         )
                     }
+                    notifyAvailableCommandsChangedIfNeeded()
                 }
                 "playlist-current-pos" -> {
                     if (value < 0) {
                         return@post
                     }
                     currentMediaItemIndex = value.toInt()
+                    notifyAvailableCommandsChangedIfNeeded()
                     val newMediaItem = currentMediaItem
                     if (oldMediaItem?.mediaId != newMediaItem?.mediaId) {
                         oldMediaItem = newMediaItem
@@ -702,6 +706,9 @@ class MPVPlayer(
         mpvLib.command(arrayOf("playlist-clear"))
         mpvLib.command(arrayOf("playlist-remove", "current"))
         internalMediaItems = mediaItems
+        currentMediaItemIndex = 0
+        oldMediaItem = null
+        notifyAvailableCommandsChangedIfNeeded()
     }
 
     /**
@@ -725,8 +732,11 @@ class MPVPlayer(
         mpvLib.command(arrayOf("playlist-clear"))
         mpvLib.command(arrayOf("playlist-remove", "current"))
         internalMediaItems = mediaItems
+        currentMediaItemIndex = startWindowIndex.coerceAtLeast(0)
+        oldMediaItem = null
         initialIndex = startWindowIndex
         initialSeekTo = startPositionMs
+        notifyAvailableCommandsChangedIfNeeded()
     }
 
     /**
@@ -737,14 +747,21 @@ class MPVPlayer(
      * @param mediaItems The [MediaItems][MediaItem] to add.
      */
     override fun addMediaItems(index: Int, mediaItems: MutableList<MediaItem>) {
-        internalMediaItems.addAll(index, mediaItems)
+        val insertionIndex = index.coerceIn(0, internalMediaItems.size)
+        val hadCurrentItem = currentMediaItem != null
+        val oldCurrentIndex = currentMediaItemIndex
+        internalMediaItems.addAll(insertionIndex, mediaItems)
+        if (hadCurrentItem && insertionIndex <= oldCurrentIndex) {
+            currentMediaItemIndex = oldCurrentIndex + mediaItems.size
+        }
+        notifyAvailableCommandsChangedIfNeeded()
         mediaItems.forEach { mediaItem ->
             mpvLib.command(
                 arrayOf(
                     "loadfile",
                     "${mediaItem.localConfiguration?.uri}",
                     "insert-at",
-                    index.toString(),
+                    insertionIndex.toString(),
                 )
             )
         }
@@ -813,17 +830,38 @@ class MPVPlayer(
                         isCurrentMediaItemSeekable) &&
                     !isPlayingAd,
             )
-            .addIf(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM, hasNextMediaItem() && !isPlayingAd)
+            .addIf(
+                COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                canSeekToNextMediaItem(
+                    internalMediaItems.size,
+                    currentMediaItemIndex,
+                    isPlayingAd,
+                ),
+            )
             .addIf(
                 COMMAND_SEEK_TO_NEXT,
                 !currentTimeline.isEmpty &&
-                    (hasNextMediaItem() || (isCurrentMediaItemLive && isCurrentMediaItemDynamic)) &&
+                    (canSeekToNextMediaItem(
+                        internalMediaItems.size,
+                        currentMediaItemIndex,
+                        isPlayingAd,
+                    ) || (isCurrentMediaItemLive && isCurrentMediaItemDynamic)) &&
                     !isPlayingAd,
             )
             .addIf(COMMAND_SEEK_TO_MEDIA_ITEM, !isPlayingAd)
             .addIf(COMMAND_SEEK_BACK, isCurrentMediaItemSeekable && !isPlayingAd)
             .addIf(COMMAND_SEEK_FORWARD, isCurrentMediaItemSeekable && !isPlayingAd)
             .build()
+    }
+
+    private fun notifyAvailableCommandsChangedIfNeeded() {
+        val availableCommands = getAvailableCommands()
+        if (availableCommands == lastAvailableCommands) return
+
+        lastAvailableCommands = availableCommands
+        listeners.sendEvent(Player.EVENT_AVAILABLE_COMMANDS_CHANGED) { listener ->
+            listener.onAvailableCommandsChanged(availableCommands)
+        }
     }
 
     private fun resetInternalState() {

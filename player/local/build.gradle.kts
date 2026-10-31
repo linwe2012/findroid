@@ -34,4 +34,5 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.libmpv)
     implementation(libs.timber)
+    testImplementation("junit:junit:4.13.2")
 }
